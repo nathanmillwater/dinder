@@ -1,0 +1,11 @@
+services:
+  dinder:
+    build: .
+    ports:
+      - "${DINDER_PORT:-3000}:3000"
+    volumes:
+      - dinder-data:/data
+    init: true
+    restart: unless-stopped
+volumes:
+  dinder-data:
