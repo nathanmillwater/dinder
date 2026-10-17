@@ -167,7 +167,7 @@ app.get("/api/rounds/current", (req, res) =>
 );
 app.post("/api/rounds", (req, res) => {
   const p = profile(req);
-  const r = store.start(req.body.mealIds);
+  const r = store.start(req.body.mealIds, req.body.plan === true);
   res.json(store.state(p, r.id));
 });
 app.post("/api/rounds/:id/votes", (req, res) => {

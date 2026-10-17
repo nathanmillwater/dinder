@@ -2339,3 +2339,239 @@ footer {
     scroll-behavior: auto !important;
   }
 }
+/* Meal planner */
+.planner-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 28px;
+  margin-top: 22px;
+  padding: 26px 30px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+}
+.planner-copy h2 {
+  font-size: 25px;
+  margin: 10px 0 8px;
+}
+.planner-copy h2 em {
+  color: var(--coral);
+}
+.planner-copy p {
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 420px;
+}
+.planner-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.plan-slots {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #758668;
+}
+.planner-action .plan-slots {
+  align-items: flex-end;
+}
+.swipe-area .plan-slots,
+.center-empty .plan-slots {
+  margin-top: 18px;
+}
+.plan-slots > div {
+  display: flex;
+  gap: 6px;
+}
+.plan-slots > div > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px dashed #c9d3bb;
+  font-size: 15px;
+  line-height: 1;
+}
+.plan-slots > div > span.filled {
+  border: 0;
+  background: #e6edda;
+  animation: slot-in 0.3s ease-out;
+}
+@keyframes slot-in {
+  from {
+    transform: scale(0.6);
+  }
+}
+.week-plan {
+  list-style: none;
+  margin: 25px auto 13px;
+  padding: 6px;
+  width: 100%;
+  max-width: 420px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+.week-plan li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 12px;
+  border-radius: 12px;
+}
+.week-plan li + li {
+  border-top: 1px solid var(--border);
+}
+.week-day {
+  width: 82px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #64765d;
+}
+.week-emoji {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: #eef2e6;
+  font-size: 19px;
+  overflow: hidden;
+}
+.week-emoji img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.week-meal {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.week-plan li.open .week-meal {
+  color: #a3ad97;
+  font-weight: 500;
+  font-style: italic;
+}
+.week-plan a {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  color: #516b43;
+}
+.week-plan a:hover {
+  color: var(--coral);
+  background: #f3f5ec;
+}
+.week-plan.compact {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.week-plan.compact li {
+  min-height: 40px;
+  padding: 4px 0;
+  gap: 10px;
+}
+.week-plan.compact .week-day {
+  width: 36px;
+}
+.week-plan.compact .week-emoji {
+  width: 28px;
+  height: 28px;
+  font-size: 15px;
+}
+.week-plan.compact .week-meal {
+  font-size: 13px;
+}
+.match-toast-region {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  pointer-events: none;
+}
+.match-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 18px;
+  border-radius: 14px;
+  background: var(--green);
+  color: #fffbee;
+  font-size: 13px;
+  box-shadow: 0 10px 30px #1d33281f;
+  animation: toast-in 0.25s ease-out;
+}
+.match-toast svg {
+  color: #ebae91;
+  flex-shrink: 0;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@media (max-width: 700px) {
+  .planner-panel {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 18px;
+    margin-top: 18px;
+    padding: 22px 20px;
+  }
+  .planner-copy h2 {
+    font-size: 22px;
+  }
+  .planner-action {
+    align-items: stretch;
+    text-align: center;
+  }
+  .planner-action .plan-slots {
+    align-items: center;
+  }
+  .plan-slots > div > span {
+    width: 28px;
+    height: 28px;
+  }
+  .week-plan li {
+    gap: 10px;
+    padding: 6px 8px;
+  }
+  .week-day {
+    width: 70px;
+  }
+  .match-toast-region {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-slots > div > span.filled,
+  .match-toast {
+    animation: none;
+  }
+}

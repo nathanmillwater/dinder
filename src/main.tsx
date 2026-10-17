@@ -13,8 +13,11 @@ type Meal = {
 type Round = {
   id: number;
   status: "active" | "matched" | "exhausted";
+  created: string;
+  goal: number;
   meals: Meal[];
   winner: Meal | null;
+  matches: Meal[];
   votes: { meal_id: number; liked: number }[];
   progress: { id: number; count: number }[];
 };
@@ -22,8 +25,12 @@ type MatchHistory = {
   id: number;
   startedAt: string;
   matchedAt: string | null;
-  meal: Meal;
-};
+} & (
+  | { kind: "match"; meal: Meal }
+  | { kind: "plan"; goal: number; complete: boolean; meals: Meal[] }
+);
+// Dinners in a meal plan; mirrors WEEK in server/store.js.
+const WEEK = 7;
 type Draft = Omit<Meal, "id"> & { id?: number };
 const empty: Draft = {
   name: "",
@@ -113,6 +120,12 @@ function Icon({ name, size = 22 }: { name: string; size?: number }) {
       </>
     ),
     back: <path d="M20 12H4m6-6-6 6 6 6" />,
+    calendar: (
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M3 10h18M8 3v4m8-4v4" />
+      </>
+    ),
     upload: (
       <>
         <path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5" />
@@ -159,6 +172,74 @@ function Food({
     </div>
   );
 }
+// The plan's nights run on from the day it was started.
+function WeekPlan({
+  meals,
+  goal,
+  start,
+  compact = false,
+}: {
+  meals: Meal[];
+  goal: number;
+  start: string;
+  compact?: boolean;
+}) {
+  const day = new Intl.DateTimeFormat(undefined, {
+    weekday: compact ? "short" : "long",
+  });
+  return (
+    <ol className={"week-plan" + (compact ? " compact" : "")}>
+      {Array.from({ length: compact ? meals.length : goal }, (_, i) => {
+        const meal = meals[i];
+        return (
+          <li key={i} className={meal ? "" : "open"}>
+            <span className="week-day">
+              {day.format(new Date(Date.parse(start) + i * 86400000))}
+            </span>
+            {meal ? (
+              <>
+                <span className="week-emoji" aria-hidden="true">
+                  {meal.photo ? <img src={meal.photo} alt="" /> : meal.emoji}
+                </span>
+                <span className="week-meal">{meal.name}</span>
+                {meal.recipe && (
+                  <a
+                    href={meal.recipe}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={"Recipe for " + meal.name}
+                  >
+                    <Icon name="link" size={15} />
+                  </a>
+                )}
+              </>
+            ) : (
+              <span className="week-meal">Still to decide</span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+function PlanSlots({ meals, goal }: { meals: Meal[]; goal: number }) {
+  return (
+    <div className="plan-slots">
+      <div role="img" aria-label={`${meals.length} of ${goal} dinners planned`}>
+        {Array.from({ length: goal }, (_, i) => (
+          <span key={i} className={meals[i] ? "filled" : ""}>
+            {meals[i]?.emoji}
+          </span>
+        ))}
+      </div>
+      <span>
+        {meals.length} of {goal} dinners planned
+      </span>
+    </div>
+  );
+}
+// SQLite's CURRENT_TIMESTAMP is UTC without a zone marker.
+const utc = (value: string) => value.replace(" ", "T") + "Z";
 function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]),
     [meals, setMeals] = useState<Meal[]>([]),
@@ -257,6 +338,37 @@ function App() {
     (m) => !round.votes.some((v) => v.meal_id === m.id),
   );
   const modal = !!draft || settings || selection !== null || !!confirmDelete;
+  const planning = !!round && round.goal > 1;
+  const planCount = history.filter((h) => h.kind === "plan").length,
+    matchCount = history.length - planCount;
+  const historySummary = [
+    matchCount && `${matchCount} ${matchCount === 1 ? "match" : "matches"}`,
+    planCount && `${planCount} week ${planCount === 1 ? "plan" : "plans"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  // Announce each new shared yes while a plan is still filling up.
+  const [toast, setToast] = useState("");
+  const seenMatches = useRef<{ id: number; count: number } | null>(null);
+  useEffect(() => {
+    if (!round) return;
+    // The finished plan speaks for itself; don't leave a stale toast over it.
+    if (round.status !== "active") setToast("");
+    const seen = seenMatches.current;
+    if (
+      seen?.id === round.id &&
+      round.matches.length > seen.count &&
+      round.goal > 1 &&
+      round.status === "active"
+    )
+      setToast(round.matches[round.matches.length - 1].name);
+    seenMatches.current = { id: round.id, count: round.matches.length };
+  }, [round]);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 3200);
+    return () => clearTimeout(timer);
+  }, [toast]);
   useEffect(() => {
     Promise.all([api<Profile[]>("/profiles"), api<Meal[]>("/meals")])
       .then(([p, m]) => {
@@ -381,7 +493,7 @@ function App() {
   async function refreshMeals() {
     setMeals(await api<Meal[]>("/meals"));
   }
-  function start(ids?: number[]) {
+  function start(ids?: number[], plan = false) {
     if (!profile) return;
     if (inFlight.current) return;
     writeVersion.current++;
@@ -390,7 +502,11 @@ function App() {
       try {
         const r = await api<Round>("/rounds", {
           method: "POST",
-          body: JSON.stringify({ profile, ...(ids ? { mealIds: ids } : {}) }),
+          body: JSON.stringify({
+            profile,
+            plan,
+            ...(ids ? { mealIds: ids } : {}),
+          }),
         });
         setRound(r);
         setTab("match");
@@ -587,14 +703,18 @@ function App() {
                     }
                   >
                     {round?.status === "active"
-                      ? "Join Match Mode"
+                      ? planning
+                        ? "Back to the week plan"
+                        : "Join Match Mode"
                       : "Let’s find dinner"}
                     <Icon name="arrow" size={20} />
                   </button>
                   <div className="hero-footnote">
                     <span className="status-dot" />
                     {round?.status === "active"
-                      ? "Your round is ready. Pick up where you left off."
+                      ? planning
+                        ? "A week plan is underway. Finish it first."
+                        : "Your round is ready. Pick up where you left off."
                       : `Up to ${Math.min(meals.length, 10)} meals. Your next shared yes.`}
                   </div>
                 </div>
@@ -616,9 +736,16 @@ function App() {
                 </div>
                 {!historyLoading && history[0] ? (
                   <>
-                    <Food meal={history[0].meal} />
+                    <Food
+                      meal={
+                        history[0].kind === "plan"
+                          ? history[0].meals[0]
+                          : history[0].meal
+                      }
+                    />
                     <div className="recent-body">
                       <span className="small muted">
+                        {history[0].kind === "plan" && "Week plan · "}
                         {new Intl.DateTimeFormat(undefined, {
                           dateStyle: "medium",
                         }).format(
@@ -627,7 +754,11 @@ function App() {
                           ),
                         )}
                       </span>
-                      <h3>{history[0].meal.name}</h3>
+                      <h3>
+                        {history[0].kind === "plan"
+                          ? `${history[0].meals.length} dinners planned`
+                          : history[0].meal.name}
+                      </h3>
                       <button
                         className="text-button"
                         onClick={() => setTab("history")}
@@ -656,6 +787,51 @@ function App() {
                   </div>
                 )}
               </aside>
+            </section>
+            <section className="planner-panel">
+              <div className="planner-copy">
+                <span className="eyebrow">
+                  <Icon name="calendar" size={15} /> MEAL PLANNER
+                </span>
+                <h2>
+                  A week of dinners, <em>sorted.</em>
+                </h2>
+                <p>
+                  Keep swiping together until you have {WEEK} meals you both
+                  said yes to.
+                </p>
+              </div>
+              <div className="planner-action">
+                {planning && round?.status === "active" && (
+                  <PlanSlots meals={round.matches} goal={round.goal} />
+                )}
+                <button
+                  className="button secondary"
+                  disabled={
+                    busy ||
+                    (round?.status !== "active" && meals.length < WEEK)
+                  }
+                  onClick={() =>
+                    round?.status === "active"
+                      ? setTab("match")
+                      : start(undefined, true)
+                  }
+                >
+                  {round?.status === "active"
+                    ? planning
+                      ? "Keep planning"
+                      : "Join the current round"
+                    : "Plan our week"}
+                  <Icon name="calendar" size={18} />
+                </button>
+                {round?.status !== "active" && (
+                  <span className="small muted">
+                    {meals.length < WEEK
+                      ? `Add ${WEEK - meals.length} more ${WEEK - meals.length === 1 ? "meal" : "meals"} to plan a week.`
+                      : `You’ll swipe through all ${meals.length} meals.`}
+                  </span>
+                )}
+              </div>
             </section>
             <section className="collection-preview">
               <div className="section-head">
@@ -871,14 +1047,40 @@ function App() {
             ) : history.length ? (
               <>
                 <div className="collection-toolbar">
-                  <span>
-                    {history.length}{" "}
-                    {history.length === 1 ? "match" : "matches"} made together
-                  </span>
+                  <span>{historySummary} made together</span>
                   <span>Newest first</span>
                 </div>
                 <div className="meal-grid">
-                  {history.map((match) => (
+                  {history.map((match) =>
+                    match.kind === "plan" ? (
+                      <article
+                        className="meal-tile history-tile plan-tile"
+                        key={match.id}
+                      >
+                        <div className="tile-content">
+                          <div className="history-date">
+                            <Icon name="calendar" size={13} />
+                            <time dateTime={match.matchedAt || match.startedAt}>
+                              Week plan ·{" "}
+                              {new Intl.DateTimeFormat(undefined, {
+                                dateStyle: "medium",
+                              }).format(new Date(match.startedAt))}
+                            </time>
+                          </div>
+                          <h3>
+                            {match.complete
+                              ? "A week of dinners"
+                              : `${match.meals.length} of ${match.goal} nights planned`}
+                          </h3>
+                          <WeekPlan
+                            compact
+                            meals={match.meals}
+                            goal={match.goal}
+                            start={match.startedAt}
+                          />
+                        </div>
+                      </article>
+                    ) : (
                     <article className="meal-tile history-tile" key={match.id}>
                       <Food meal={match.meal} />
                       <div className="tile-content">
@@ -910,7 +1112,8 @@ function App() {
                         )}
                       </div>
                     </article>
-                  ))}
+                    ),
+                  )}
                 </div>
               </>
             ) : (
@@ -937,14 +1140,26 @@ function App() {
               Back to discover
             </button>
             <div className="match-top">
-              <span className="eyebrow">TONIGHT’S MATCH</span>
+              <span className="eyebrow">
+                {planning ? "THE WEEK AHEAD" : "TONIGHT’S MATCH"}
+              </span>
               <h1>
-                Follow your <em>cravings.</em>
+                {planning ? (
+                  <>
+                    Seven nights, <em>sorted.</em>
+                  </>
+                ) : (
+                  <>
+                    Follow your <em>cravings.</em>
+                  </>
+                )}
               </h1>
               <p>
-                {round?.status === "active"
-                  ? "Right for “yes please”. Left for “not tonight”."
-                  : "Your table for two is waiting."}
+                {round?.status !== "active"
+                  ? "Your table for two is waiting."
+                  : planning
+                    ? "Right for yes, left for no. Every shared yes joins the plan."
+                    : "Right for “yes please”. Left for “not tonight”."}
               </p>
             </div>
             {!online && (
@@ -964,6 +1179,62 @@ function App() {
                   onClick={() => start()}
                 >
                   Start a round <Icon name="heart" size={18} />
+                </button>
+              </div>
+            ) : planning && round.status === "matched" ? (
+              <div className="result">
+                <div className="confetti" aria-hidden="true">
+                  ✦ <span>♥</span> ✧
+                </div>
+                <span className="result-pill">SEVEN NIGHTS. ZERO DEBATES.</span>
+                <h2>Your week is planned!</h2>
+                <p>{round.goal} dinners you both said yes to.</p>
+                <WeekPlan
+                  meals={round.matches}
+                  goal={round.goal}
+                  start={utc(round.created)}
+                />
+                <button
+                  className="text-button"
+                  disabled={busy || meals.length < WEEK}
+                  onClick={() => start(undefined, true)}
+                >
+                  Plan another week <Icon name="calendar" size={17} />
+                </button>
+              </div>
+            ) : planning && round.status === "exhausted" ? (
+              <div className="center-empty">
+                <span>🗓️</span>
+                <h2>
+                  {round.matches.length
+                    ? `${round.matches.length} of ${round.goal} nights planned.`
+                    : "Different cravings this week?"}
+                </h2>
+                <p>
+                  You’ve both swiped every meal.{" "}
+                  {round.matches.length
+                    ? "Your matches are saved in History. Add a few new meals to fill the rest of the week."
+                    : "Add a few new meals and try again."}
+                </p>
+                {round.matches.length > 0 && (
+                  <WeekPlan
+                    meals={round.matches}
+                    goal={round.goal}
+                    start={utc(round.created)}
+                  />
+                )}
+                <button
+                  className="button primary"
+                  disabled={busy || meals.length < WEEK}
+                  onClick={() => start(undefined, true)}
+                >
+                  Plan another week <Icon name="calendar" size={18} />
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => setTab("meals")}
+                >
+                  Add more meals
                 </button>
               </div>
             ) : round.status === "matched" && round.winner ? (
@@ -1021,7 +1292,9 @@ function App() {
             ) : current ? (
               <div className="swipe-area">
                 <div className="round-meta">
-                  <span>TONIGHT’S SHORTLIST</span>
+                  <span>
+                    {planning ? "THIS WEEK’S MENU" : "TONIGHT’S SHORTLIST"}
+                  </span>
                   <span>
                     {round.votes.length + 1}{" "}
                     <span className="muted">/ {round.meals.length}</span>
@@ -1131,6 +1404,9 @@ function App() {
                   {round.progress.find((p) => p.id !== profile)?.count || 0} of{" "}
                   {round.meals.length} meals
                 </div>
+                {planning && (
+                  <PlanSlots meals={round.matches} goal={round.goal} />
+                )}
               </div>
             ) : (
               <div className="center-empty">
@@ -1141,8 +1417,13 @@ function App() {
                 <p>
                   Waiting for {partner?.name} to finish swiping.
                   <br />
-                  Keep this open — we’ll show your match here.
+                  {planning
+                    ? "Keep this open — we’ll show your week here."
+                    : "Keep this open — we’ll show your match here."}
                 </p>
+                {planning && (
+                  <PlanSlots meals={round.matches} goal={round.goal} />
+                )}
                 <div className="waiting-progress">
                   <span
                     style={{
@@ -1167,6 +1448,16 @@ function App() {
           At home, together
         </span>
       </footer>
+      <div className="match-toast-region" role="status">
+        {toast && (
+          <div className="match-toast">
+            <Icon name="heart" size={18} />
+            <span>
+              <strong>It’s a match!</strong> {toast} is on the menu.
+            </span>
+          </div>
+        )}
+      </div>
       {modal && (
         <div
           className="modal-overlay"

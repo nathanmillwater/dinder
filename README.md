@@ -20,9 +20,13 @@ Either person starts a round with up to ten randomly selected meals. The other o
 
 Only one round can be active. Both people must finish it or match before starting another. Private votes stay hidden; each partner can see the other's progress count. This is designed for a trusted LAN, without authentication.
 
+## Meal planner
+
+“Plan our week” starts a round that keeps going until you have seven shared yeses — a dinner for each night. It swipes through your whole collection (at least seven meals), each match pops up as it happens, and the finished plan lists the nights from the day you started. It shares the one-active-round rule with Match Mode. If you both run out of meals first, the nights you did match are kept in History.
+
 ## Match history
 
-The History tab saves every successful match, newest first, with its meal details and recipe link. It is shared between both profiles and survives meal edits, deletion, and restarts. Existing matches are included automatically; older matches show their round start time because an exact match timestamp was not recorded before this feature.
+The History tab saves every successful match and week plan (including partly filled ones), newest first, with its meal details and recipe link. It is shared between both profiles and survives meal edits, deletion, and restarts. Existing matches are included automatically; older matches show their round start time because an exact match timestamp was not recorded before this feature.
 
 ## Data and backup
 

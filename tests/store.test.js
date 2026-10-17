@@ -167,3 +167,72 @@ test("history migration retains legacy matches and remains safe on repeated star
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("meal plans need a week of meals and swipe the whole collection", () => {
+  let s = setup(6);
+  assert.throws(() => s.start(undefined, true), /at least 7 meals/);
+  s.db.close();
+  s = setup(12);
+  const r = s.start(undefined, true);
+  assert.equal(r.goal, 7);
+  assert.equal(s.state(1).meals.length, 12);
+  assert.equal(s.start().id, r.id);
+  s.db.close();
+});
+
+test("meal plans collect shared yeses in order until a week is planned", () => {
+  const s = setup(10),
+    r = s.start(undefined, true),
+    deck = s.state(1).meals;
+  s.vote(r.id, 1, deck[0].id, true);
+  s.vote(r.id, 2, deck[0].id, false);
+  const yeses = deck.slice(1, 8).reverse();
+  for (const m of yeses) s.vote(r.id, 1, m.id, true);
+  for (const [i, m] of yeses.entries()) {
+    const after = s.vote(r.id, 2, m.id, true);
+    assert.equal(after.matches.length, i + 1);
+    assert.equal(after.status, i < 6 ? "active" : "matched");
+  }
+  const done = s.state(2);
+  assert.equal(done.winner, null);
+  assert.deepEqual(
+    done.matches.map((m) => m.id),
+    yeses.map((m) => m.id),
+  );
+  s.vote(r.id, 1, deck[8].id, true);
+  s.vote(r.id, 2, deck[8].id, true);
+  assert.equal(s.state(1).matches.length, 7);
+  const [entry] = s.history();
+  assert.equal(entry.kind, "plan");
+  assert.equal(entry.complete, true);
+  assert.ok(entry.matchedAt.endsWith("Z"));
+  assert.deepEqual(
+    entry.meals.map((m) => m.id),
+    yeses.map((m) => m.id),
+  );
+  s.db.close();
+});
+
+test("an unfinished plan keeps its partial week in history; an empty one does not", () => {
+  const s = setup(7);
+  const empty = s.start(undefined, true);
+  for (const p of [1, 2])
+    for (const m of s.state(p).meals) s.vote(empty.id, p, m.id, false);
+  assert.equal(s.state(1).status, "exhausted");
+  assert.deepEqual(s.history(), []);
+  const partial = s.start(undefined, true);
+  for (const p of [1, 2])
+    for (const m of s.state(p).meals)
+      s.vote(partial.id, p, m.id, m.id <= 3);
+  assert.equal(s.state(1).status, "exhausted");
+  const [entry] = s.history();
+  assert.equal(entry.id, partial.id);
+  assert.equal(entry.complete, false);
+  assert.equal(entry.meals.length, 3);
+  const quick = s.start([1]);
+  s.vote(quick.id, 1, 1, true);
+  s.vote(quick.id, 2, 1, true);
+  assert.equal(s.history()[0].kind, "match");
+  assert.equal(s.state(1).matches.length, 1);
+  s.db.close();
+});
