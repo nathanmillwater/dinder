@@ -3,134 +3,107 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 type Profile = { id: number; name: string };
 type Meal = {
-  id: number;
+  id: string;
   name: string;
+  notes: string;
   photo: string;
   recipe: string;
-  notes: string;
-  emoji: string;
+  planned?: { id: number; date: string }[];
+};
+type Assignment = { recipeId: string; date: string };
+type Review = {
+  token: string;
+  summary: string[];
+  assignments?: Assignment[];
+  sourceEntryId?: number;
+  targetEntryId?: number;
 };
 type Round = {
-  id: number;
-  status: "active" | "matched" | "exhausted";
-  created: string;
-  goal: number;
-  meals: Meal[];
-  winner: Meal | null;
+  id: string;
+  mode: "planner" | "picker";
+  source: "recipes" | "mealplan";
+  status: string;
+  startDate: string;
+  today: string;
+  dates: string[];
+  total: number;
+  current: Meal | null;
   matches: Meal[];
-  votes: { meal_id: number; liked: number }[];
   progress: { id: number; count: number }[];
+  review: Review | null;
+  syncError: string;
+  canRetry: boolean;
+  result: string[] | null;
 };
-type MatchHistory = {
+type Config = {
+  today: string;
+  nextMonday: string;
+  timeZone: string;
+  mealieUrl: string;
+  profiles: Profile[];
+};
+type State = Config & { round: Round | null; recipes: Meal[] };
+type Entry = {
   id: number;
-  startedAt: string;
-  matchedAt: string | null;
-} & (
-  | { kind: "match"; meal: Meal }
-  | { kind: "plan"; goal: number; complete: boolean; meals: Meal[] }
-);
-// Dinners in a meal plan; mirrors WEEK in server/store.js.
-const WEEK = 7;
-type Draft = Omit<Meal, "id"> & { id?: number };
-const empty: Draft = {
-  name: "",
-  photo: "",
-  recipe: "",
-  notes: "",
-  emoji: "🍽️",
+  date: string;
+  recipeId: string | null;
+  title: string;
 };
-const emojis = [
-  "🍽️",
-  "🍝",
-  "🌮",
-  "🍕",
-  "🍛",
-  "🍜",
-  "🥗",
-  "🍔",
-  "🐟",
-  "🍳",
-  "🥔",
-  "🍄",
-  "🥘",
-  "🍗",
-  "🥙",
-  "🍲",
-];
-async function api<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch("/api" + url, {
-    ...options,
-    headers:
-      options?.body instanceof FormData
-        ? undefined
-        : { "Content-Type": "application/json" },
-  });
-  const body = await response.json();
-  if (!response.ok) throw Error(body.error || "Something went wrong.");
-  return body;
+async function api<T>(
+  path: string,
+  profile: number,
+  body?: unknown,
+  method = body === undefined ? "GET" : "POST",
+): Promise<T> {
+  const res = await fetch(
+    "/api" + path + (path.includes("?") ? "&" : "?") + "profile=" + profile,
+    {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    },
+  );
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw Object.assign(
+      Error("Dinder is unreachable. Reconnect to continue."),
+      { status: 502 },
+    );
+  }
+  if (!res.ok)
+    throw Object.assign(Error(data.error || "Something went wrong."), {
+      status: res.status,
+    });
+  return data;
 }
 function Icon({ name, size = 22 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
-    home: (
-      <>
-        <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />
-        <path d="M9 21v-8h6v8" />
-      </>
-    ),
-    history: (
-      <>
-        <path d="M3 11a9 9 0 1 1 2.8 7M3 4v7h7" />
-        <path d="M12 7v5l3 2" />
-      </>
-    ),
     heart: (
       <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" />
     ),
-    grid: (
+    calendar: (
       <>
-        <rect x="3" y="3" width="7" height="7" rx="2" />
-        <rect x="14" y="3" width="7" height="7" rx="2" />
-        <rect x="3" y="14" width="7" height="7" rx="2" />
-        <rect x="14" y="14" width="7" height="7" rx="2" />
+        <rect x="3" y="5" width="18" height="16" rx="3" />
+        <path d="M16 3v4M8 3v4M3 11h18M8 15h2m4 0h2m-8 3h2" />
       </>
     ),
-    plus: <path d="M12 5v14M5 12h14" />,
-    close: <path d="m6 6 12 12M18 6 6 18" />,
     arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
-    edit: (
-      <>
-        <path d="m15 5 4 4M4 20l5-1L21 7a2.8 2.8 0 0 0-4-4L5 15l-1 5Z" />
-      </>
-    ),
+    close: <path d="m6 6 12 12M18 6 6 18" />,
     link: (
       <>
-        <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2" />
+        <path d="M10 13a5 5 0 0 0 7 .1l3-3a5 5 0 0 0-7-7l-2 2" />
+        <path d="M14 11a5 5 0 0 0-7-.1l-3 3a5 5 0 0 0 7 7l2-2" />
       </>
     ),
-    users: (
+    refresh: (
       <>
-        <circle cx="9" cy="7" r="4" />
-        <path d="M2 21v-3a7 7 0 0 1 14 0v3M17 4a4 4 0 0 1 0 8m2 3a6 6 0 0 1 3 6" />
+        <path d="M20 7V2m0 5h-5M4 17v5m0-5h5" />
+        <path d="M5 7a8 8 0 0 1 14-2l1 2M4 17l1 2a8 8 0 0 0 14-2" />
       </>
     ),
     check: <path d="m5 12 4 4L19 6" />,
-    shuffle: (
-      <>
-        <path d="M3 5h3l12 14h3m-4-4 4 4-4 3M3 19h3l4-5m3-5 5-4h3m-4-3 4 3-4 4" />
-      </>
-    ),
-    back: <path d="M20 12H4m6-6-6 6 6 6" />,
-    calendar: (
-      <>
-        <rect x="3" y="5" width="18" height="16" rx="2" />
-        <path d="M3 10h18M8 3v4m8-4v4" />
-      </>
-    ),
-    upload: (
-      <>
-        <path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5" />
-      </>
-    ),
   };
   return (
     <svg
@@ -148,494 +121,321 @@ function Icon({ name, size = 22 }: { name: string; size?: number }) {
     </svg>
   );
 }
-function Food({
-  meal,
-  className = "",
-}: {
-  meal: Pick<Meal, "name" | "emoji" | "photo">;
-  className?: string;
-}) {
+function Photo({ meal }: { meal: Meal }) {
+  const [failed, setFailed] = useState("");
   return (
-    <div className={"food " + className} data-emoji={meal.emoji}>
-      {meal.photo ? (
-        <img src={meal.photo} alt={meal.name} />
+    <div className="food">
+      {meal.photo && failed !== meal.photo ? (
+        <img
+          src={meal.photo}
+          alt={meal.name}
+          draggable={false}
+          onError={() => setFailed(meal.photo)}
+        />
       ) : (
-        <>
-          <span className="food-ring" />
-          <span className="food-emoji" aria-hidden="true">
-            {meal.emoji}
-          </span>
-          <span className="food-spark one">✦</span>
-          <span className="food-spark two">✧</span>
-        </>
+        <div className="food-art">
+          <span>🍽️</span>
+          <i>✦</i>
+          <small>made to share</small>
+        </div>
       )}
     </div>
   );
 }
-// The plan's nights run on from the day it was started.
-function WeekPlan({
-  meals,
-  goal,
-  start,
-  compact = false,
-}: {
-  meals: Meal[];
-  goal: number;
-  start: string;
-  compact?: boolean;
-}) {
-  const day = new Intl.DateTimeFormat(undefined, {
-    weekday: compact ? "short" : "long",
-  });
-  return (
-    <ol className={"week-plan" + (compact ? " compact" : "")}>
-      {Array.from({ length: compact ? meals.length : goal }, (_, i) => {
-        const meal = meals[i];
-        return (
-          <li key={i} className={meal ? "" : "open"}>
-            <span className="week-day">
-              {day.format(new Date(Date.parse(start) + i * 86400000))}
-            </span>
-            {meal ? (
-              <>
-                <span className="week-emoji" aria-hidden="true">
-                  {meal.photo ? <img src={meal.photo} alt="" /> : meal.emoji}
-                </span>
-                <span className="week-meal">{meal.name}</span>
-                {meal.recipe && (
-                  <a
-                    href={meal.recipe}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={"Recipe for " + meal.name}
-                  >
-                    <Icon name="link" size={15} />
-                  </a>
-                )}
-              </>
-            ) : (
-              <span className="week-meal">Still to decide</span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-function PlanSlots({ meals, goal }: { meals: Meal[]; goal: number }) {
-  return (
-    <div className="plan-slots">
-      <div role="img" aria-label={`${meals.length} of ${goal} dinners planned`}>
-        {Array.from({ length: goal }, (_, i) => (
-          <span key={i} className={meals[i] ? "filled" : ""}>
-            {meals[i]?.emoji}
-          </span>
-        ))}
-      </div>
-      <span>
-        {meals.length} of {goal} dinners planned
-      </span>
-    </div>
-  );
-}
-// SQLite's CURRENT_TIMESTAMP is UTC without a zone marker.
-const utc = (value: string) => value.replace(" ", "T") + "Z";
+const dayLabel = (date: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(date + "T12:00:00Z"));
+const active = (r: Round | null) =>
+  !!r && !["complete", "cancelled", "expired"].includes(r.status);
 function App() {
-  const [profiles, setProfiles] = useState<Profile[]>([]),
-    [meals, setMeals] = useState<Meal[]>([]),
-    [profile, setProfile] = useState<number>(() =>
-      [1, 2].includes(Number(localStorage.getItem("dinder-profile")))
-        ? Number(localStorage.getItem("dinder-profile"))
-        : 0,
-    );
-  const [tab, setTab] = useState<"home" | "meals" | "match" | "history">(
-      sessionStorage.getItem("dinder-tab") === "history"
-        ? "history"
-        : sessionStorage.getItem("dinder-tab") === "match"
-          ? "match"
-          : sessionStorage.getItem("dinder-tab") === "meals"
-            ? "meals"
-            : "home",
+  const [config, setConfig] = useState<Config | null>(null),
+    [profile, setProfile] = useState(
+      () => Number(localStorage.getItem("dinder-profile")) || 0,
     ),
     [round, setRound] = useState<Round | null>(null),
-    [loaded, setLoaded] = useState(false),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [online, setOnline] = useState(true);
-  const [history, setHistory] = useState<MatchHistory[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  useEffect(() => {
-    if (tab !== "history" && tab !== "home") return;
-    let stopped = false;
-    setHistoryLoading(true);
-    const refresh = async () => {
-      try {
-        const matches = await api<MatchHistory[]>("/history");
-        if (!stopped) setHistory(matches);
-      } catch (e) {
-        if (!stopped) setError((e as Error).message);
-      } finally {
-        if (!stopped) setHistoryLoading(false);
-      }
-    };
-    void refresh();
-    const timer = setInterval(refresh, 5000);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [tab]);
-  const [draft, setDraft] = useState<Draft | null>(null),
-    [settings, setSettings] = useState(false),
-    [names, setNames] = useState<string[]>([]),
-    [selection, setSelection] = useState<number[] | null>(null),
-    [search, setSearch] = useState(""),
-    [confirmDelete, setConfirmDelete] = useState<Meal | null>(null);
-  const [drag, setDrag] = useState(0),
-    [exit, setExit] = useState(0);
-  const pointer = useRef<{ x: number; y: number } | null>(null);
-  // Read by the modal's key handler so busy changes don't re-run its focus setup.
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
-  const voteLock = useRef(false);
-  const inFlight = useRef(false);
-  const generation = useRef(0);
-  const writeVersion = useRef(0);
-  const modalRef = useRef<HTMLDivElement>(null);
-  const returnFocus = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    let stopped = false;
-    const refresh = async () => {
-      try {
-        const [p, m] = await Promise.all([
-          api<Profile[]>("/profiles"),
-          api<Meal[]>("/meals"),
-        ]);
-        if (!stopped) {
-          setProfiles(p);
-          setMeals(m);
-          setLoaded(true);
-        }
-      } catch {
-        /* Round polling reports connectivity during matching. */
-      }
-    };
-    const timer = setInterval(refresh, 5000);
-    window.addEventListener("focus", refresh);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-      window.removeEventListener("focus", refresh);
-    };
-  }, []);
-  useEffect(() => {
-    sessionStorage.setItem("dinder-tab", tab);
-    window.scrollTo(0, 0);
-  }, [tab]);
-  const me = profiles.find((p) => p.id === profile),
-    partner = profiles.find((p) => p.id !== profile);
-  const current = round?.meals.find(
-    (m) => !round.votes.some((v) => v.meal_id === m.id),
+    [recipes, setRecipes] = useState<Meal[]>([]);
+  const [screen, setScreen] = useState<"home" | "round">(() =>
+    sessionStorage.getItem("dinder-screen") === "round" ? "round" : "home",
   );
-  const modal = !!draft || settings || selection !== null || !!confirmDelete;
-  const planning = !!round && round.goal > 1;
-  const planCount = history.filter((h) => h.kind === "plan").length,
-    matchCount = history.length - planCount;
-  const historySummary = [
-    matchCount && `${matchCount} ${matchCount === 1 ? "match" : "matches"}`,
-    planCount && `${planCount} week ${planCount === 1 ? "plan" : "plans"}`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  // Announce each new shared yes while a plan is still filling up.
-  const [toast, setToast] = useState("");
-  const seenMatches = useRef<{ id: number; count: number } | null>(null);
+  const [startDate, setStartDate] = useState(""),
+    [source, setSource] = useState<"recipes" | "mealplan">("recipes"),
+    [busy, setBusy] = useState(false),
+    [online, setOnline] = useState(false),
+    [error, setError] = useState("");
+  const [assignments, setAssignments] = useState<Assignment[]>([]),
+    [choices, setChoices] = useState<Entry[]>([]),
+    [sourceEntry, setSourceEntry] = useState(""),
+    [targetEntry, setTargetEntry] = useState("");
+  const [settings, setSettings] = useState(false),
+    [names, setNames] = useState<string[]>([]),
+    [search, setSearch] = useState(""),
+    [drag, setDrag] = useState(0),
+    [confirmCancel, setConfirmCancel] = useState(false);
+  const inFlight = useRef(false),
+    generation = useRef(0),
+    polling = useRef(false),
+    writeVersion = useRef(0),
+    pointer = useRef<{ x: number; y: number } | null>(null),
+    dialog = useRef<HTMLDialogElement>(null),
+    voteRef = useRef<(liked: boolean) => void>(() => {});
   useEffect(() => {
-    if (!round) return;
-    // The finished plan speaks for itself; don't leave a stale toast over it.
-    if (round.status !== "active") setToast("");
-    const seen = seenMatches.current;
-    if (
-      seen?.id === round.id &&
-      round.matches.length > seen.count &&
-      round.goal > 1 &&
-      round.status === "active"
-    )
-      setToast(round.matches[round.matches.length - 1].name);
-    seenMatches.current = { id: round.id, count: round.matches.length };
-  }, [round]);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(""), 3200);
-    return () => clearTimeout(timer);
-  }, [toast]);
-  useEffect(() => {
-    Promise.all([api<Profile[]>("/profiles"), api<Meal[]>("/meals")])
-      .then(([p, m]) => {
-        setProfiles(p);
-        setMeals(m);
-        setLoaded(true);
+    api<Config>("/config", 0)
+      .then((c) => {
+        setConfig(c);
+        setStartDate(c.nextMonday);
       })
       .catch((e) => setError(e.message));
   }, []);
   useEffect(() => {
-    if (!profile) return;
+    sessionStorage.setItem("dinder-screen", screen);
+    window.scrollTo(0, 0);
+  }, [screen]);
+  useEffect(() => {
+    if (![1, 2].includes(profile)) return;
     const epoch = ++generation.current;
     let stopped = false;
-    let pending = false;
-    async function poll() {
-      if (pending || inFlight.current) return;
-      pending = true;
+    const refresh = async () => {
+      if (inFlight.current || polling.current) return;
+      polling.current = true;
       const version = writeVersion.current;
       try {
-        const r = await api<Round | null>("/rounds/current?profile=" + profile);
+        const data = await api<State>("/state", profile);
         if (
           !stopped &&
           epoch === generation.current &&
           version === writeVersion.current &&
           !inFlight.current
         ) {
-          setRound(r);
+          setConfig(data);
+          setRecipes(data.recipes);
+          setRound(data.round);
           setOnline(true);
         }
-      } catch {
-        if (!stopped) setOnline(false);
+      } catch (e) {
+        if (!stopped) {
+          setOnline(false);
+          setError((e as Error).message);
+        }
       } finally {
-        pending = false;
+        polling.current = false;
       }
-    }
-    void poll();
-    const timer = setInterval(poll, 1000);
+    };
+    void refresh();
+    const timer = setInterval(refresh, 2500);
+    window.addEventListener("focus", refresh);
     return () => {
       stopped = true;
       clearInterval(timer);
+      window.removeEventListener("focus", refresh);
     };
   }, [profile]);
+  const matchesKey = round?.matches.map((m) => m.id).join(",") || "";
   useEffect(() => {
-    if (!modal) return;
-    returnFocus.current = document.activeElement as HTMLElement;
-    const old = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    requestAnimationFrame(() =>
-      modalRef.current
-        ?.querySelector<HTMLElement>("input,button,textarea")
-        ?.focus(),
-    );
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        closeModal();
-      }
-      if (e.key === "Tab") {
-        const all = modalRef.current?.querySelectorAll<HTMLElement>(
-          "button:not(:disabled),input:not(:disabled),textarea:not(:disabled),a[href]",
+    if (round?.mode === "planner")
+      setAssignments(
+        round.review?.assignments ||
+          round.matches.map((m, i) => ({
+            recipeId: m.id,
+            date: round.dates[i],
+          })),
+      );
+    setChoices([]);
+    setSourceEntry("");
+    setTargetEntry("");
+  }, [round?.id, matchesKey]);
+  useEffect(() => {
+    if (
+      round?.mode !== "picker" ||
+      !round.matches.length ||
+      !["review", "exhausted"].includes(round.status)
+    )
+      return;
+    let stopped = false;
+    api<{ entries: Entry[] }>("/rounds/" + round.id + "/choices", profile)
+      .then(({ entries }) => {
+        if (stopped) return;
+        setChoices(entries);
+        const sources = entries.filter(
+          (e) => e.recipeId === round.matches[0]?.id,
         );
-        if (!all?.length) return;
-        const first = all[0],
-          last = all[all.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
+        if (
+          round.review?.sourceEntryId &&
+          sources.some((e) => e.id === round.review!.sourceEntryId)
+        )
+          setSourceEntry(String(round.review.sourceEntryId));
+        else if (sources.length === 1) setSourceEntry(String(sources[0].id));
+        const tonight = entries.filter((e) => e.date === round.today);
+        if (
+          round.review?.targetEntryId &&
+          tonight.some((e) => e.id === round.review!.targetEntryId)
+        )
+          setTargetEntry(String(round.review.targetEntryId));
+        else if (tonight.length === 1) setTargetEntry(String(tonight[0].id));
+      })
+      .catch((e) => {
+        if (!stopped) setError(e.message);
+      });
     return () => {
-      document.body.style.overflow = old;
-      document.removeEventListener("keydown", handler);
-      returnFocus.current?.focus();
+      stopped = true;
     };
-  }, [modal]);
+  }, [round?.id, round?.status, matchesKey, profile]);
+  useEffect(() => {
+    if (settings) dialog.current?.showModal();
+    else dialog.current?.close();
+  }, [settings]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (
-        tab !== "match" ||
-        modal ||
-        !current ||
-        round?.status !== "active" ||
-        e.repeat
-      )
-        return;
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        screen === "round" &&
+        !settings &&
+        !e.repeat &&
+        !["INPUT", "SELECT", "TEXTAREA"].includes(
+          (e.target as HTMLElement)?.tagName,
+        ) &&
+        ["ArrowLeft", "ArrowRight"].includes(e.key)
+      ) {
         e.preventDefault();
-        void vote(e.key === "ArrowRight");
+        voteRef.current(e.key === "ArrowRight");
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  });
+  }, [screen, settings]);
+  const me = config?.profiles.find((p) => p.id === profile),
+    partner = config?.profiles.find((p) => p.id !== profile);
   function choose(id: number) {
+    generation.current++;
     setProfile(id);
     localStorage.setItem("dinder-profile", String(id));
     setRound(null);
-    setTab("home");
-  }
-  function closeModal() {
-    if (busyRef.current) return;
-    setDraft(null);
+    setOnline(false);
+    setScreen("home");
     setSettings(false);
-    setSelection(null);
-    setConfirmDelete(null);
+    setError("");
   }
   async function perform(task: () => Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    writeVersion.current++;
     setBusy(true);
     setError("");
     try {
       await task();
+      setOnline(true);
     } catch (e) {
       setError((e as Error).message);
+      if ((e as { status?: number }).status! >= 500 || e instanceof TypeError)
+        setOnline(false);
     } finally {
-      setBusy(false);
-    }
-  }
-  async function refreshMeals() {
-    setMeals(await api<Meal[]>("/meals"));
-  }
-  function start(ids?: number[], plan = false) {
-    if (!profile) return;
-    if (inFlight.current) return;
-    writeVersion.current++;
-    inFlight.current = true;
-    void perform(async () => {
-      try {
-        const r = await api<Round>("/rounds", {
-          method: "POST",
-          body: JSON.stringify({
-            profile,
-            plan,
-            ...(ids ? { mealIds: ids } : {}),
-          }),
-        });
-        setRound(r);
-        setTab("match");
-        setSelection(null);
-      } finally {
-        inFlight.current = false;
-      }
-    });
-  }
-  async function vote(liked: boolean) {
-    if (voteLock.current || !current || round?.status !== "active" || !online)
-      return;
-    voteLock.current = true;
-    writeVersion.current++;
-    inFlight.current = true;
-    setBusy(true);
-    setError("");
-    setExit(liked ? 1 : -1);
-    try {
-      const [r] = await Promise.all([
-        api<Round>(`/rounds/${round.id}/votes`, {
-          method: "POST",
-          body: JSON.stringify({ profile, mealId: current.id, liked }),
-        }),
-        new Promise((resolve) => setTimeout(resolve, 220)),
-      ]);
-      setRound(r);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setExit(0);
-      setDrag(0);
-      setBusy(false);
-      voteLock.current = false;
       inFlight.current = false;
+      setBusy(false);
     }
   }
-  function saveMeal(e: React.FormEvent) {
-    e.preventDefault();
-    if (!draft) return;
+  function act(
+    path: string,
+    body: unknown = {},
+    onResult?: (r: Round) => void,
+  ) {
     void perform(async () => {
-      await api("/meals" + (draft.id ? "/" + draft.id : ""), {
-        method: draft.id ? "PUT" : "POST",
-        body: JSON.stringify(draft),
-      });
-      await refreshMeals();
-      setDraft(null);
+      const r = await api<Round>(path, profile, body);
+      setRound(r);
+      onResult?.(r);
     });
   }
-  function upload(file?: File) {
-    if (!file || !draft) return;
-    void perform(async () => {
-      const form = new FormData();
-      form.append("photo", file);
-      const result = await api<{ photo: string }>("/uploads", {
-        method: "POST",
-        body: form,
-      });
-      setDraft((d) => (d ? { ...d, photo: result.photo } : null));
+  function start(mode: "planner" | "picker") {
+    act("/rounds", { mode, source, startDate }, () => setScreen("round"));
+  }
+  function vote(liked: boolean) {
+    if (!online || busy || round?.status !== "swiping" || !round.current)
+      return;
+    setDrag(0);
+    act("/rounds/" + round.id + "/votes", { mealId: round.current.id, liked });
+  }
+  voteRef.current = vote;
+  async function refresh() {
+    await perform(async () => {
+      const data = await api<State>("/state?fresh=true", profile);
+      setConfig(data);
+      setRound(data.round);
+      setRecipes(data.recipes);
     });
   }
+  function review() {
+    if (!round) return;
+    act(
+      "/rounds/" + round.id + "/review",
+      round.mode === "planner"
+        ? { assignments }
+        : {
+            sourceEntryId: Number(sourceEntry),
+            targetEntryId: targetEntry ? Number(targetEntry) : null,
+          },
+    );
+  }
+  const saving = round && ["publishing", "sync_error"].includes(round.status);
+  const tonightEntries = choices.filter((e) => e.date === round?.today),
+    sourceEntries = choices.filter((e) => e.recipeId === round?.matches[0]?.id);
+  const selectedIsTonight =
+    choices.find((e) => e.id === Number(sourceEntry))?.date === round?.today;
   return (
     <>
       <header className="header">
-        <a
-          href="#"
-          className="brand"
-          aria-label="Dinder home"
-          onClick={(e) => {
-            e.preventDefault();
-            setTab("home");
-          }}
-        >
-          <span className="brand-icon">
-            <Icon name="heart" size={24} />
-          </span>
-          dinder<span className="brand-dot">.</span>
-        </a>
-        <nav aria-label="Main navigation">
-          {(
-            [
-              { id: "home", label: "Discover", icon: "home" },
-              { id: "match", label: "Match", icon: "heart" },
-              { id: "meals", label: "Our meals", icon: "grid" },
-              { id: "history", label: "History", icon: "history" },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.id}
-              className={tab === item.id ? "active" : ""}
-              aria-current={tab === item.id ? "page" : undefined}
-              onClick={() => setTab(item.id)}
-            >
-              <Icon name={item.icon} size={18} />
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
         <button
-          className="profile-button"
-          onClick={() => {
-            setNames(profiles.map((p) => p.name));
-            setSettings(true);
-          }}
+          className="brand"
+          onClick={() => setScreen("home")}
+          aria-label="Dinder home"
         >
-          <span className="avatar">
-            {me?.name.charAt(0) || <Icon name="users" size={16} />}
-          </span>
-          <span>{me?.name || "Who’s cooking?"}</span>
-          <span className="chevron">⌄</span>
+          <Icon name="heart" size={28} />
+          dinder<span>.</span>
         </button>
+        <div className="header-right">
+          <span className="tag">DINNER, TOGETHER</span>
+          {me && (
+            <button
+              className="profile-button"
+              onClick={() => {
+                setNames(config!.profiles.map((p) => p.name));
+                setSettings(true);
+              }}
+            >
+              <span>{me.name.charAt(0)}</span>
+              {me.name}
+              <small>⌄</small>
+            </button>
+          )}
+        </div>
       </header>
       <main>
         {error && (
-          <div className="error" role="alert">
+          <div role="alert" className="notice error">
             <span>{error}</span>
-            <button aria-label="Dismiss error" onClick={() => setError("")}>
-              <Icon name="close" size={17} />
+            <button
+              className="icon-button"
+              aria-label="Dismiss error"
+              onClick={() => setError("")}
+            >
+              <Icon name="close" size={18} />
             </button>
           </div>
         )}
-        {!loaded ? (
-          <div className="loading">
+        {!config ? (
+          <section className="empty">
             <span className="spinner" />
-            Setting the table…
-          </div>
-        ) : !profile ? (
+            <h2>Setting the table…</h2>
+            <button
+              className="button secondary"
+              onClick={() => location.reload()}
+            >
+              Try again
+            </button>
+          </section>
+        ) : ![1, 2].includes(profile) ? (
           <section className="onboard">
-            <span className="eyebrow">A TABLE FOR TWO</span>
+            <span className="eyebrow">YOUR TABLE FOR TWO</span>
             <h1>
               Good food.
               <br />
@@ -643,9 +443,9 @@ function App() {
             </h1>
             <p>First things first. Who’s hungry?</p>
             <div className="profile-options">
-              {profiles.map((p, i) => (
+              {config.profiles.map((p, i) => (
                 <button key={p.id} onClick={() => choose(p.id)}>
-                  <span className={"profile-circle p" + i}>
+                  <span className={"avatar avatar-" + i}>
                     {i === 0 ? "☀" : "☾"}
                   </span>
                   <strong>{p.name}</strong>
@@ -655,1067 +455,809 @@ function App() {
                 </button>
               ))}
             </div>
-            <p className="small muted">No passwords. Just the two of you.</p>
-          </section>
-        ) : tab === "home" ? (
-          <>
-            <section className="dashboard-intro">
-              <div>
-                <span className="eyebrow">YOUR TABLE FOR TWO</span>
-                <h1>
-                  Hey, {me?.name}
-                  <span className="coral">.</span>
-                </h1>
-                <p>Let’s find something you both fancy.</p>
-              </div>
-              <div className="couple-badge">
-                <span className="couple-avatars">
-                  {profiles.map((p) => (
-                    <span key={p.id}>{p.name.charAt(0)}</span>
-                  ))}
-                </span>
-                <span>{profiles.map((p) => p.name).join(" + ")}</span>
-              </div>
-            </section>
-            <section className="dashboard-grid">
-              <div className="dinner-panel">
-                <div className="dinner-panel-copy">
-                  <span className="eyebrow">
-                    <Icon name="heart" size={15} /> MATCH MODE
-                  </span>
-                  <h2>
-                    Two appetites.
-                    <br />
-                    <em>One happy dinner.</em>
-                  </h2>
-                  <p>
-                    Swipe through tonight’s shortlist.
-                    <br />
-                    Find the meal you both say yes to.
-                  </p>
-                  <button
-                    className="button primary hero-cta"
-                    disabled={
-                      busy || (!meals.length && round?.status !== "active")
-                    }
-                    onClick={() =>
-                      round?.status === "active" ? setTab("match") : start()
-                    }
-                  >
-                    {round?.status === "active"
-                      ? planning
-                        ? "Back to the week plan"
-                        : "Join Match Mode"
-                      : "Let’s find dinner"}
-                    <Icon name="arrow" size={20} />
-                  </button>
-                  <div className="hero-footnote">
-                    <span className="status-dot" />
-                    {round?.status === "active"
-                      ? planning
-                        ? "A week plan is underway. Finish it first."
-                        : "Your round is ready. Pick up where you left off."
-                      : `Up to ${Math.min(meals.length, 10)} meals. Your next shared yes.`}
-                  </div>
-                </div>
-                <div className="dinner-illustration" aria-hidden="true">
-                  <span className="plate-orbit" />
-                  <div className="dinner-plate">
-                    <span>🍝</span>
-                  </div>
-                  <span className="plate-heart">
-                    <Icon name="heart" size={24} />
-                  </span>
-                  <span className="plate-caption">a good night in</span>
-                </div>
-              </div>
-              <aside className="recent-panel">
-                <div className="recent-heading">
-                  <span className="eyebrow">YOUR LATEST MATCH</span>
-                  <Icon name="history" size={17} />
-                </div>
-                {!historyLoading && history[0] ? (
-                  <>
-                    <Food
-                      meal={
-                        history[0].kind === "plan"
-                          ? history[0].meals[0]
-                          : history[0].meal
-                      }
-                    />
-                    <div className="recent-body">
-                      <span className="small muted">
-                        {history[0].kind === "plan" && "Week plan · "}
-                        {new Intl.DateTimeFormat(undefined, {
-                          dateStyle: "medium",
-                        }).format(
-                          new Date(
-                            history[0].matchedAt || history[0].startedAt,
-                          ),
-                        )}
-                      </span>
-                      <h3>
-                        {history[0].kind === "plan"
-                          ? `${history[0].meals.length} dinners planned`
-                          : history[0].meal.name}
-                      </h3>
-                      <button
-                        className="text-button"
-                        onClick={() => setTab("history")}
-                      >
-                        See your dinner history <Icon name="arrow" size={16} />
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="recent-empty">
-                    <span>
-                      <Icon name="heart" size={29} />
-                    </span>
-                    <h3>
-                      {historyLoading
-                        ? "Setting the table…"
-                        : "Good dinners to come."}
-                    </h3>
-                    <p>Your shared favourites will find a home here.</p>
-                    <button
-                      className="text-button"
-                      onClick={() => setTab("history")}
-                    >
-                      View history <Icon name="arrow" size={16} />
-                    </button>
-                  </div>
-                )}
-              </aside>
-            </section>
-            <section className="planner-panel">
-              <div className="planner-copy">
-                <span className="eyebrow">
-                  <Icon name="calendar" size={15} /> MEAL PLANNER
-                </span>
-                <h2>
-                  A week of dinners, <em>sorted.</em>
-                </h2>
-                <p>
-                  Keep swiping together until you have {WEEK} meals you both
-                  said yes to.
-                </p>
-              </div>
-              <div className="planner-action">
-                {planning && round?.status === "active" && (
-                  <PlanSlots meals={round.matches} goal={round.goal} />
-                )}
-                <button
-                  className="button secondary"
-                  disabled={
-                    busy ||
-                    (round?.status !== "active" && meals.length < WEEK)
-                  }
-                  onClick={() =>
-                    round?.status === "active"
-                      ? setTab("match")
-                      : start(undefined, true)
-                  }
-                >
-                  {round?.status === "active"
-                    ? planning
-                      ? "Keep planning"
-                      : "Join the current round"
-                    : "Plan our week"}
-                  <Icon name="calendar" size={18} />
-                </button>
-                {round?.status !== "active" && (
-                  <span className="small muted">
-                    {meals.length < WEEK
-                      ? `Add ${WEEK - meals.length} more ${WEEK - meals.length === 1 ? "meal" : "meals"} to plan a week.`
-                      : `You’ll swipe through all ${meals.length} meals.`}
-                  </span>
-                )}
-              </div>
-            </section>
-            <section className="collection-preview">
-              <div className="section-head">
-                <div>
-                  <span className="eyebrow">YOUR SHARED COLLECTION</span>
-                  <h2>
-                    On your menu<span className="coral">.</span>
-                  </h2>
-                </div>
-                <button className="text-button" onClick={() => setTab("meals")}>
-                  View all meals <Icon name="arrow" size={18} />
-                </button>
-              </div>
-              {meals.length ? (
-                <div className="preview-grid">
-                  {meals.slice(0, 4).map((m) => (
-                    <button
-                      className="preview-meal"
-                      key={m.id}
-                      onClick={() => {
-                        setTab("meals");
-                        setDraft(m);
-                      }}
-                    >
-                      <Food meal={m} />
-                      <h3>{m.name}</h3>
-                      <span>{m.notes || "A contender for tonight."}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-collection">
-                  <span className="empty-emoji">🍽️</span>
-                  <div>
-                    <h3>Your next favourite dinner starts here.</h3>
-                    <p>
-                      Add your own meals, or get a head start with 12 dinner
-                      ideas.
-                    </p>
-                  </div>
-                  <button
-                    className="button secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      void perform(async () => {
-                        setMeals(
-                          await api<Meal[]>("/seed", { method: "POST" }),
-                        );
-                      })
-                    }
-                  >
-                    Add starter meals <Icon name="plus" size={17} />
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() => setDraft({ ...empty })}
-                  >
-                    Add my own
-                  </button>
-                </div>
-              )}
-            </section>
-            <div className="bottom-note">
-              <Icon name="heart" size={15} /> Made for your table for two.
-            </div>
-          </>
-        ) : tab === "meals" ? (
-          <section className="meals-page">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">A LITTLE OF WHAT YOU LOVE</span>
-                <h1>
-                  Our meals<span className="coral">.</span>
-                </h1>
-                <p className="muted">
-                  Keep your favourites close. Add something new when the craving
-                  hits.
-                </p>
-              </div>
-              <button
-                className="button primary"
-                onClick={() => setDraft({ ...empty })}
-              >
-                <Icon name="plus" size={19} />
-                Add a meal
-              </button>
-            </div>
-            <div className="collection-toolbar">
-              <span>
-                {meals.length} {meals.length === 1 ? "meal" : "meals"} on the
-                menu
-              </span>
-              <input
-                aria-label="Search meals"
-                placeholder="Find a favourite…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            {meals.length ? (
-              <div className="meal-grid">
-                {meals
-                  .filter((m) =>
-                    (m.name + " " + m.notes)
-                      .toLowerCase()
-                      .includes(search.toLowerCase()),
-                  )
-                  .map((m) => (
-                    <article className="meal-tile" key={m.id}>
-                      <button
-                        className="meal-image-button"
-                        aria-label={"Edit " + m.name}
-                        onClick={() => setDraft(m)}
-                      >
-                        <Food meal={m} />
-                      </button>
-                      <div className="tile-content">
-                        <div className="tile-heading">
-                          <h3>{m.name}</h3>
-                          <button
-                            className="icon-button"
-                            aria-label={"Edit " + m.name}
-                            onClick={() => setDraft(m)}
-                          >
-                            <Icon name="edit" size={17} />
-                          </button>
-                        </div>
-                        <p>{m.notes || "Ready for a dinner date."}</p>
-                        <div className="tile-bottom">
-                          {m.recipe ? (
-                            <a href={m.recipe} target="_blank" rel="noreferrer">
-                              <Icon name="link" size={14} />
-                              Recipe
-                            </a>
-                          ) : (
-                            <span>Made with love</span>
-                          )}
-                          <button
-                            className="delete-link"
-                            onClick={() => setConfirmDelete(m)}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                {!meals.some((m) =>
-                  (m.name + " " + m.notes)
-                    .toLowerCase()
-                    .includes(search.toLowerCase()),
-                ) && (
-                  <div className="search-empty">
-                    <Icon name="grid" size={27} />
-                    <h3>No meals found.</h3>
-                    <p>Try another search, or add a new favourite.</p>
-                    <button
-                      className="text-button"
-                      onClick={() => setSearch("")}
-                    >
-                      Clear search
-                    </button>
-                  </div>
-                )}
-                <button
-                  className="add-tile"
-                  onClick={() => setDraft({ ...empty })}
-                >
-                  <span>
-                    <Icon name="plus" size={28} />
-                  </span>
-                  <strong>Something else you love?</strong>
-                  <span>Add it to the menu</span>
-                </button>
-              </div>
-            ) : (
-              <div className="center-empty">
-                <span>🍽️</span>
-                <h2>A fresh start for your menu.</h2>
-                <p>Add a favourite meal or try our starter collection.</p>
-                <button
-                  className="button secondary"
-                  disabled={busy}
-                  onClick={() =>
-                    void perform(async () =>
-                      setMeals(await api<Meal[]>("/seed", { method: "POST" })),
-                    )
-                  }
-                >
-                  Add 12 starter meals
-                </button>
-              </div>
-            )}
-          </section>
-        ) : tab === "history" ? (
-          <section className="meals-page history-page">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">TWO YESES, EVERY TIME</span>
-                <h1>
-                  Our matches<span className="coral">.</span>
-                </h1>
-                <p className="muted">
-                  A little look back at the meals you both said yes to.
-                </p>
-              </div>
-            </div>
-            {historyLoading ? (
-              <div className="loading">
-                <span className="spinner" />
-                Looking back…
-              </div>
-            ) : history.length ? (
-              <>
-                <div className="collection-toolbar">
-                  <span>{historySummary} made together</span>
-                  <span>Newest first</span>
-                </div>
-                <div className="meal-grid">
-                  {history.map((match) =>
-                    match.kind === "plan" ? (
-                      <article
-                        className="meal-tile history-tile plan-tile"
-                        key={match.id}
-                      >
-                        <div className="tile-content">
-                          <div className="history-date">
-                            <Icon name="calendar" size={13} />
-                            <time dateTime={match.matchedAt || match.startedAt}>
-                              Week plan ·{" "}
-                              {new Intl.DateTimeFormat(undefined, {
-                                dateStyle: "medium",
-                              }).format(new Date(match.startedAt))}
-                            </time>
-                          </div>
-                          <h3>
-                            {match.complete
-                              ? "A week of dinners"
-                              : `${match.meals.length} of ${match.goal} nights planned`}
-                          </h3>
-                          <WeekPlan
-                            compact
-                            meals={match.meals}
-                            goal={match.goal}
-                            start={match.startedAt}
-                          />
-                        </div>
-                      </article>
-                    ) : (
-                    <article className="meal-tile history-tile" key={match.id}>
-                      <Food meal={match.meal} />
-                      <div className="tile-content">
-                        <div className="history-date">
-                          <Icon name="heart" size={13} />
-                          <time dateTime={match.matchedAt || match.startedAt}>
-                            {!match.matchedAt && "Round started · "}
-                            {new Intl.DateTimeFormat(undefined, {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            }).format(
-                              new Date(match.matchedAt || match.startedAt),
-                            )}
-                          </time>
-                        </div>
-                        <h3>{match.meal.name}</h3>
-                        {match.meal.notes && <p>{match.meal.notes}</p>}
-                        {match.meal.recipe && (
-                          <div className="tile-bottom">
-                            <a
-                              href={match.meal.recipe}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <Icon name="link" size={14} />
-                              View recipe
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    </article>
-                    ),
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="center-empty">
-                <span>💕</span>
-                <h2>Your first match is waiting.</h2>
-                <p>
-                  Once you both swipe right on a meal, it’ll be saved here for
-                  next time.
-                </p>
-                <button
-                  className="button primary"
-                  onClick={() => setTab("home")}
-                >
-                  Find tonight’s dinner <Icon name="arrow" size={18} />
-                </button>
-              </div>
-            )}
+            <p className="muted small">Two profiles. One happy dinner.</p>
           </section>
         ) : (
-          <section className="match-page">
-            <button className="text-button back" onClick={() => setTab("home")}>
-              <Icon name="back" size={17} />
-              Back to discover
-            </button>
-            <div className="match-top">
-              <span className="eyebrow">
-                {planning ? "THE WEEK AHEAD" : "TONIGHT’S MATCH"}
+          <>
+            <div className="source-bar">
+              <span>
+                <i className={"status-dot " + (online ? "" : "offline")} />
+                {online
+                  ? `${recipes.length} live recipes from Mealie`
+                  : "Connecting to Mealie…"}
               </span>
-              <h1>
-                {planning ? (
-                  <>
-                    Seven nights, <em>sorted.</em>
-                  </>
-                ) : (
-                  <>
-                    Follow your <em>cravings.</em>
-                  </>
-                )}
-              </h1>
-              <p>
-                {round?.status !== "active"
-                  ? "Your table for two is waiting."
-                  : planning
-                    ? "Right for yes, left for no. Every shared yes joins the plan."
-                    : "Right for “yes please”. Left for “not tonight”."}
-              </p>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() => void refresh()}
+              >
+                <Icon name="refresh" size={14} />
+                Refresh
+              </button>
             </div>
-            {!online && (
-              <div role="status" className="connection-warning">
-                Reconnecting… Your swipes are saved. We’ll pick up where you
-                left off.
-              </div>
-            )}
-            {!round ? (
-              <div className="center-empty">
-                <span>🍴</span>
-                <h2>Ready when you are.</h2>
-                <p>We’ll pick up to 10 meals from your collection.</p>
-                <button
-                  className="button primary"
-                  disabled={!meals.length || busy}
-                  onClick={() => start()}
-                >
-                  Start a round <Icon name="heart" size={18} />
-                </button>
-              </div>
-            ) : planning && round.status === "matched" ? (
-              <div className="result">
-                <div className="confetti" aria-hidden="true">
-                  ✦ <span>♥</span> ✧
-                </div>
-                <span className="result-pill">SEVEN NIGHTS. ZERO DEBATES.</span>
-                <h2>Your week is planned!</h2>
-                <p>{round.goal} dinners you both said yes to.</p>
-                <WeekPlan
-                  meals={round.matches}
-                  goal={round.goal}
-                  start={utc(round.created)}
-                />
-                <button
-                  className="text-button"
-                  disabled={busy || meals.length < WEEK}
-                  onClick={() => start(undefined, true)}
-                >
-                  Plan another week <Icon name="calendar" size={17} />
-                </button>
-              </div>
-            ) : planning && round.status === "exhausted" ? (
-              <div className="center-empty">
-                <span>🗓️</span>
-                <h2>
-                  {round.matches.length
-                    ? `${round.matches.length} of ${round.goal} nights planned.`
-                    : "Different cravings this week?"}
-                </h2>
-                <p>
-                  You’ve both swiped every meal.{" "}
-                  {round.matches.length
-                    ? "Your matches are saved in History. Add a few new meals to fill the rest of the week."
-                    : "Add a few new meals and try again."}
-                </p>
-                {round.matches.length > 0 && (
-                  <WeekPlan
-                    meals={round.matches}
-                    goal={round.goal}
-                    start={utc(round.created)}
-                  />
+            {screen === "home" ? (
+              <>
+                <section className="intro">
+                  <div>
+                    <span className="eyebrow">YOUR TABLE FOR TWO</span>
+                    <h1>
+                      Hey, {me?.name}
+                      <span className="coral">.</span>
+                    </h1>
+                    <p>A little less deciding. A little more dinner.</p>
+                  </div>
+                  <div className="couple">
+                    <span>{me?.name.charAt(0)}</span>
+                    <span>{partner?.name.charAt(0)}</span>
+                  </div>
+                </section>
+                {active(round) && (
+                  <section className="resume">
+                    <div>
+                      <strong>
+                        {round!.mode === "planner"
+                          ? "Your week is in the making."
+                          : "Tonight’s dinner is in the running."}
+                      </strong>
+                      <p>Pick up where you and {partner?.name} left off.</p>
+                    </div>
+                    <button
+                      className="button secondary"
+                      onClick={() => setScreen("round")}
+                    >
+                      Join{" "}
+                      {round!.mode === "planner"
+                        ? "Meal Planner"
+                        : "Meal Picker"}
+                      <Icon name="arrow" size={17} />
+                    </button>
+                  </section>
                 )}
-                <button
-                  className="button primary"
-                  disabled={busy || meals.length < WEEK}
-                  onClick={() => start(undefined, true)}
-                >
-                  Plan another week <Icon name="calendar" size={18} />
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => setTab("meals")}
-                >
-                  Add more meals
-                </button>
-              </div>
-            ) : round.status === "matched" && round.winner ? (
-              <div className="result">
-                <div className="confetti" aria-hidden="true">
-                  ✦ <span>♥</span> ✧
-                </div>
-                <span className="result-pill">TWO HEARTS. ONE CRAVING.</span>
-                <h2>It’s a match!</h2>
-                <p>Looks like dinner just decided itself.</p>
-                <div className="result-meal">
-                  <Food meal={round.winner} />
-                  <h3>{round.winner.name}</h3>
-                  {round.winner.notes && <p>{round.winner.notes}</p>}
-                  {round.winner.recipe && (
-                    <a
+                <div className="mode-grid">
+                  <section className="mode-card planner-card">
+                    <span className="eyebrow">
+                      <Icon name="calendar" size={17} /> MEAL PLANNER
+                    </span>
+                    <h2>
+                      Seven nights.
+                      <br />
+                      <em>Something for both of you.</em>
+                    </h2>
+                    <p>
+                      Swipe together, agree on the menu, and send your week
+                      straight to Mealie.
+                    </p>
+                    <label className="date-label">
+                      Week starting
+                      <input
+                        type="date"
+                        aria-label="Week starting"
+                        min={config.today}
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      className="button cream"
+                      disabled={busy || !online || active(round)}
+                      onClick={() => start("planner")}
+                    >
+                      Plan our week
+                      <Icon name="arrow" size={19} />
+                    </button>
+                    <span className="mode-note">
+                      Seven shared yeses. Review before replacing dinners.
+                    </span>
+                    <span className="mode-art" aria-hidden="true">
+                      🗓️
+                    </span>
+                  </section>
+                  <section className="mode-card picker-card">
+                    <span className="eyebrow">
+                      <Icon name="heart" size={17} /> MEAL PICKER
+                    </span>
+                    <h2>
+                      Two appetites.
+                      <br />
+                      <em>One happy dinner.</em>
+                    </h2>
+                    <p>
+                      Find the meal you both fancy tonight, from your recipes or
+                      the week ahead.
+                    </p>
+                    <fieldset className="pool-choice">
+                      <legend>Choose tonight’s pool</legend>
+                      <label className={source === "recipes" ? "selected" : ""}>
+                        <input
+                          type="radio"
+                          name="pool"
+                          value="recipes"
+                          checked={source === "recipes"}
+                          onChange={() => setSource("recipes")}
+                        />
+                        <span>
+                          <strong>All recipes</strong>
+                          <small>Your live Mealie collection</small>
+                        </span>
+                      </label>
+                      <label
+                        className={source === "mealplan" ? "selected" : ""}
+                      >
+                        <input
+                          type="radio"
+                          name="pool"
+                          value="mealplan"
+                          checked={source === "mealplan"}
+                          onChange={() => setSource("mealplan")}
+                        />
+                        <span>
+                          <strong>The meal plan</strong>
+                          <small>Dinners in the upcoming seven days</small>
+                        </span>
+                      </label>
+                    </fieldset>
+                    <button
                       className="button primary"
-                      href={round.winner.recipe}
+                      disabled={busy || !online || active(round)}
+                      onClick={() => start("picker")}
+                    >
+                      Pick tonight’s dinner
+                      <Icon name="arrow" size={19} />
+                    </button>
+                    <span className="mode-note">
+                      The first shared yes wins.
+                    </span>
+                  </section>
+                </div>
+                <section className="collection">
+                  <div className="section-head">
+                    <div>
+                      <span className="eyebrow">FROM YOUR MEALIE KITCHEN</span>
+                      <h2>
+                        What’s on the menu<span className="coral">.</span>
+                      </h2>
+                    </div>
+                    <a
+                      className="text-button"
+                      href={config.mealieUrl}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Let’s get cooking <Icon name="link" size={18} />
+                      Open Mealie
+                      <Icon name="link" size={15} />
                     </a>
-                  )}
-                </div>
-                <button
-                  className="text-button"
-                  disabled={busy}
-                  onClick={() => start()}
-                >
-                  Another round? <Icon name="shuffle" size={17} />
-                </button>
-              </div>
-            ) : round.status === "exhausted" ? (
-              <div className="center-empty">
-                <span>🤔</span>
-                <h2>Different cravings tonight?</h2>
-                <p>
-                  No shared yes this time. A fresh selection might do the trick.
-                </p>
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={() => start()}
-                >
-                  Try a fresh shortlist <Icon name="shuffle" size={18} />
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => setSelection(meals.map((m) => m.id))}
-                >
-                  Choose meals ourselves
-                </button>
-              </div>
-            ) : current ? (
-              <div className="swipe-area">
-                <div className="round-meta">
-                  <span>
-                    {planning ? "THIS WEEK’S MENU" : "TONIGHT’S SHORTLIST"}
-                  </span>
-                  <span>
-                    {round.votes.length + 1}{" "}
-                    <span className="muted">/ {round.meals.length}</span>
-                  </span>
-                </div>
-                <div
-                  className="swipe-progress"
-                  role="progressbar"
-                  aria-label="Your round progress"
-                  aria-valuemin={0}
-                  aria-valuemax={round.meals.length}
-                  aria-valuenow={round.votes.length}
-                >
-                  <span
-                    style={{
-                      width: `${(round.votes.length / round.meals.length) * 100}%`,
-                    }}
+                  </div>
+                  <input
+                    className="search"
+                    aria-label="Search recipes"
+                    placeholder="Find a favourite…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
                   />
-                </div>
-                <div className="swipe-stack">
-                  <div className="stack-under" />
-                  <article
-                    className={"swipe-card " + (exit ? "leaving" : "")}
-                    style={{
-                      transform: `translateX(${exit ? exit * 460 : drag}px) rotate(${exit ? exit * 24 : drag / 18}deg)`,
-                      opacity: exit ? 0 : 1,
-                    }}
-                    onPointerDown={(e) => {
-                      if (busy || e.button !== 0) return;
-                      pointer.current = { x: e.clientX, y: e.clientY };
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                    }}
-                    onPointerMove={(e) => {
-                      if (pointer.current)
-                        setDrag(e.clientX - pointer.current.x);
-                    }}
-                    onPointerUp={(e) => {
-                      if (!pointer.current) return;
-                      const dx = e.clientX - pointer.current.x,
-                        dy = e.clientY - pointer.current.y;
-                      pointer.current = null;
-                      if (Math.abs(dx) > 85 && Math.abs(dx) > Math.abs(dy))
-                        void vote(dx > 0);
-                      else setDrag(0);
-                    }}
-                    onPointerCancel={() => {
-                      pointer.current = null;
-                      setDrag(0);
-                    }}
-                  >
-                    <Food meal={current} />
-                    {Math.abs(drag) > 35 && (
-                      <span
-                        className={"swipe-stamp " + (drag > 0 ? "yes" : "no")}
-                      >
-                        {drag > 0 ? "YES PLEASE" : "NOT TONIGHT"}
-                      </span>
-                    )}
-                    <div className="swipe-description">
-                      <span className="mini-label">ON THE MENU</span>
-                      <h2>{current.name}</h2>
-                      <p>
-                        {current.notes || "Could this be the one for tonight?"}
-                      </p>
-                      {current.recipe && (
+                  <div className="recipe-grid">
+                    {recipes
+                      .filter((m) =>
+                        (m.name + " " + m.notes)
+                          .toLowerCase()
+                          .includes(search.toLowerCase()),
+                      )
+                      .slice(0, 12)
+                      .map((m) => (
                         <a
-                          onPointerDown={(e) => e.stopPropagation()}
-                          href={current.recipe}
+                          className="recipe-tile"
+                          key={m.id}
+                          href={m.recipe}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          <Icon name="link" size={14} />
-                          Take a peek at the recipe
+                          <Photo meal={m} />
+                          <div>
+                            <h3>{m.name}</h3>
+                            <p>{m.notes || "A contender for tonight."}</p>
+                            <span>View recipe ↗</span>
+                          </div>
                         </a>
-                      )}
+                      ))}
+                  </div>
+                  {!recipes.length && (
+                    <div className="empty">
+                      <h3>Your next favourite starts in Mealie.</h3>
+                      <p>
+                        Add recipes there and they’ll appear here automatically.
+                      </p>
                     </div>
-                  </article>
-                </div>
-                <div className="swipe-controls">
-                  <div>
-                    <button
-                      className="reject"
-                      aria-label="Not tonight — swipe left"
-                      disabled={busy || !online}
-                      onClick={() => void vote(false)}
-                    >
-                      <Icon name="close" size={31} />
-                    </button>
-                    <span>Not tonight</span>
-                  </div>
-                  <span className="swipe-hint">go with your gut</span>
-                  <div>
-                    <button
-                      className="accept"
-                      aria-label="Yes please — swipe right"
-                      disabled={busy || !online}
-                      onClick={() => void vote(true)}
-                    >
-                      <Icon name="heart" size={29} />
-                    </button>
-                    <span>Yes please!</span>
-                  </div>
-                </div>
-                <div className="partner-status">
-                  <span className="status-dot" />
-                  {partner?.name} has swiped on{" "}
-                  {round.progress.find((p) => p.id !== profile)?.count || 0} of{" "}
-                  {round.meals.length} meals
-                </div>
-                {planning && (
-                  <PlanSlots meals={round.matches} goal={round.goal} />
-                )}
-              </div>
+                  )}
+                  <p className="muted small">
+                    Add and edit recipes in Mealie. Dinder always uses your live
+                    collection.
+                  </p>
+                </section>
+              </>
             ) : (
-              <div className="center-empty">
-                <span className="waiting-hearts">
-                  ♥ <small>♥</small>
-                </span>
-                <h2>Your cravings are in.</h2>
-                <p>
-                  Waiting for {partner?.name} to finish swiping.
-                  <br />
-                  {planning
-                    ? "Keep this open — we’ll show your week here."
-                    : "Keep this open — we’ll show your match here."}
-                </p>
-                {planning && (
-                  <PlanSlots meals={round.matches} goal={round.goal} />
-                )}
-                <div className="waiting-progress">
-                  <span
-                    style={{
-                      width: `${((round.progress.find((p) => p.id !== profile)?.count || 0) / round.meals.length) * 100}%`,
-                    }}
-                  />
+              <section className="round-page">
+                <div className="round-nav">
+                  <button
+                    className="text-button"
+                    onClick={() => setScreen("home")}
+                  >
+                    ← Back to your table
+                  </button>
+                  {active(round) && !saving && (
+                    <button
+                      className="text-button cancel"
+                      onClick={() => setConfirmCancel(!confirmCancel)}
+                    >
+                      Cancel round
+                    </button>
+                  )}
                 </div>
-                <span className="small muted">
-                  {round.progress.find((p) => p.id !== profile)?.count || 0} of{" "}
-                  {round.meals.length} meals swiped
-                </span>
-              </div>
+                {confirmCancel && (
+                  <div className="notice">
+                    <span>
+                      Discard this round? Nothing will be changed in Mealie.
+                    </span>
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        if (round)
+                          act("/rounds/" + round.id + "/cancel", {}, () => {
+                            setConfirmCancel(false);
+                            setScreen("home");
+                          });
+                      }}
+                    >
+                      Discard round
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() => setConfirmCancel(false)}
+                    >
+                      Keep it
+                    </button>
+                  </div>
+                )}
+                {!online && (
+                  <div className="notice connection-warning" role="status">
+                    Reconnecting to Mealie. Your votes are saved; swiping and
+                    saving will resume when it’s back.
+                  </div>
+                )}
+                {!round ? (
+                  <div className="empty">
+                    <h2>Your table is waiting.</h2>
+                    <button
+                      className="button primary"
+                      onClick={() => setScreen("home")}
+                    >
+                      Choose a mode
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="round-heading">
+                      <span className="eyebrow">
+                        {round.mode === "planner"
+                          ? "MEAL PLANNER · " + dayLabel(round.startDate)
+                          : "MEAL PICKER · TONIGHT"}
+                      </span>
+                      <h1>
+                        {round.mode === "planner" ? (
+                          <>
+                            A week you <em>both love.</em>
+                          </>
+                        ) : (
+                          <>
+                            Follow your <em>cravings.</em>
+                          </>
+                        )}
+                      </h1>
+                      <p>
+                        {round.mode === "planner"
+                          ? "Every shared yes joins the week. Review your nights before sending them to Mealie."
+                          : round.source === "mealplan"
+                            ? "Choose from the plan. Your winner can swap into tonight."
+                            : "Choose from every recipe. The first shared yes wins."}
+                      </p>
+                    </div>
+                    {round.mode === "planner" && (
+                      <div
+                        className="plan-progress"
+                        aria-label={`${round.matches.length} of 7 dinners agreed`}
+                      >
+                        {Array.from({ length: 7 }, (_, i) => (
+                          <span
+                            key={i}
+                            className={round.matches[i] ? "filled" : ""}
+                          >
+                            {round.matches[i] ? (
+                              <Icon name="check" size={16} />
+                            ) : (
+                              i + 1
+                            )}
+                          </span>
+                        ))}
+                        <small>{round.matches.length} of 7 agreed</small>
+                      </div>
+                    )}
+                    {round.status === "swiping" && round.current ? (
+                      <>
+                        <div className="swipe-deck">
+                          <article
+                            className="swipe-card"
+                            onDragStart={(e) => e.preventDefault()}
+                            style={{
+                              transform: `translateX(${drag}px) rotate(${drag / 24}deg)`,
+                            }}
+                            onPointerDown={(e) => {
+                              if (
+                                (e.target as HTMLElement).closest("a,button") ||
+                                busy ||
+                                !online
+                              )
+                                return;
+                              pointer.current = { x: e.clientX, y: e.clientY };
+                              e.currentTarget.setPointerCapture(e.pointerId);
+                            }}
+                            onPointerMove={(e) => {
+                              if (pointer.current) {
+                                const dx = e.clientX - pointer.current.x,
+                                  dy = e.clientY - pointer.current.y;
+                                if (Math.abs(dx) > Math.abs(dy)) setDrag(dx);
+                              }
+                            }}
+                            onPointerUp={() => {
+                              if (pointer.current && Math.abs(drag) > 85)
+                                vote(drag > 0);
+                              pointer.current = null;
+                              setDrag(0);
+                            }}
+                            onPointerCancel={() => {
+                              pointer.current = null;
+                              setDrag(0);
+                            }}
+                          >
+                            <Photo meal={round.current} />
+                            {Math.abs(drag) > 35 && (
+                              <span
+                                className={
+                                  "swipe-stamp " + (drag > 0 ? "yes" : "no")
+                                }
+                              >
+                                {drag > 0 ? "YES PLEASE" : "NOT TONIGHT"}
+                              </span>
+                            )}
+                            <div className="swipe-copy">
+                              <span className="eyebrow">
+                                {round.current.planned?.length
+                                  ? "ON THE PLAN · " +
+                                    round.current.planned
+                                      .map((e) => dayLabel(e.date))
+                                      .join(", ")
+                                  : "ON THE MENU"}
+                              </span>
+                              <h2>{round.current.name}</h2>
+                              <p>
+                                {round.current.notes ||
+                                  "Could this be the one for you both?"}
+                              </p>
+                              <a
+                                href={round.current.recipe}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <Icon name="link" size={15} />
+                                Take a peek at the recipe
+                              </a>
+                            </div>
+                          </article>
+                        </div>
+                        <div className="swipe-controls">
+                          <div>
+                            <button
+                              className="reject"
+                              aria-label="Not tonight — swipe left"
+                              disabled={busy || !online}
+                              onClick={() => vote(false)}
+                            >
+                              <Icon name="close" size={30} />
+                            </button>
+                            <span>Not tonight</span>
+                          </div>
+                          <small>go with your gut</small>
+                          <div>
+                            <button
+                              className="accept"
+                              aria-label="Yes please — swipe right"
+                              disabled={busy || !online}
+                              onClick={() => vote(true)}
+                            >
+                              <Icon name="heart" size={28} />
+                            </button>
+                            <span>Yes please!</span>
+                          </div>
+                        </div>
+                      </>
+                    ) : round.status === "swiping" ? (
+                      <div className="empty waiting">
+                        <span className="large-heart">♡</span>
+                        <h2>Your cravings are in.</h2>
+                        <p>Waiting for {partner?.name} to finish swiping.</p>
+                      </div>
+                    ) : null}
+                    {round.status === "swiping" && (
+                      <div className="partner-status">
+                        <i className="status-dot" />
+                        {partner?.name} has swiped{" "}
+                        {round.progress.find((p) => p.id !== profile)?.count ||
+                          0}{" "}
+                        of {round.total} recipes.
+                      </div>
+                    )}
+                    {["review", "exhausted"].includes(round.status) && (
+                      <div className="review-panel">
+                        <span className="eyebrow">
+                          {round.mode === "planner"
+                            ? "YOUR SHARED YESES"
+                            : "TWO YESES. ONE DINNER."}
+                        </span>
+                        <h2>
+                          {round.mode === "planner"
+                            ? round.matches.length === 7
+                              ? "Your week is ready to review."
+                              : `${round.matches.length} dinners you both fancy.`
+                            : round.matches.length
+                              ? "It’s a match!"
+                              : "Different cravings tonight?"}
+                        </h2>
+                        {!round.matches.length ? (
+                          <p>
+                            No shared yeses this time. Try the recipes again or
+                            start a new round with a different pool.
+                          </p>
+                        ) : round.mode === "planner" ? (
+                          <>
+                            <p>
+                              Assign each meal to a night. Only dinners on these
+                              dates will be replaced; other dates and meal types
+                              stay as they are.
+                            </p>
+                            <div className="assignment-list">
+                              {round.matches.map((m) => (
+                                <label key={m.id}>
+                                  <span>{m.name}</span>
+                                  <select
+                                    aria-label={"Night for " + m.name}
+                                    value={
+                                      assignments.find(
+                                        (a) => a.recipeId === m.id,
+                                      )?.date || ""
+                                    }
+                                    disabled={busy}
+                                    onChange={(e) => {
+                                      const date = e.target.value;
+                                      setAssignments((a) => {
+                                        const previous = a.find(
+                                          (v) => v.recipeId === m.id,
+                                        )?.date;
+                                        return a.map((v) =>
+                                          v.recipeId === m.id
+                                            ? { ...v, date }
+                                            : v.date === date
+                                              ? { ...v, date: previous || "" }
+                                              : v,
+                                        );
+                                      });
+                                    }}
+                                  >
+                                    {round.dates.map((d) => (
+                                      <option key={d} value={d}>
+                                        {dayLabel(d)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="winner">
+                              <Photo meal={round.matches[0]} />
+                              <h3>{round.matches[0].name}</h3>
+                              <a
+                                href={round.matches[0].recipe}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                View recipe ↗
+                              </a>
+                            </div>
+                            {round.source === "mealplan" && (
+                              <label className="field">
+                                Which planned dinner?
+                                <select
+                                  aria-label="Planned dinner to move"
+                                  value={sourceEntry}
+                                  onChange={(e) =>
+                                    setSourceEntry(e.target.value)
+                                  }
+                                >
+                                  <option value="">
+                                    Choose a planned date
+                                  </option>
+                                  {sourceEntries.map((e) => (
+                                    <option key={e.id} value={e.id}>
+                                      {dayLabel(e.date)} · {e.title}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            )}
+                            {tonightEntries.length > 0 &&
+                              !selectedIsTonight && (
+                                <label className="field">
+                                  Tonight’s dinner to{" "}
+                                  {round.source === "mealplan"
+                                    ? "swap"
+                                    : "replace"}
+                                  <select
+                                    aria-label="Tonight’s dinner"
+                                    value={targetEntry}
+                                    onChange={(e) =>
+                                      setTargetEntry(e.target.value)
+                                    }
+                                  >
+                                    <option value="">
+                                      Choose tonight’s dinner
+                                    </option>
+                                    {tonightEntries.map((e) => (
+                                      <option key={e.id} value={e.id}>
+                                        {e.title}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              )}
+                          </>
+                        )}
+                        {round.matches.length > 0 && (
+                          <button
+                            className="button primary"
+                            disabled={busy || !online}
+                            onClick={review}
+                          >
+                            Review{" "}
+                            {round.mode === "planner"
+                              ? "Mealie changes"
+                              : "tonight’s change"}
+                            <Icon name="arrow" size={18} />
+                          </button>
+                        )}
+                        {round.review &&
+                          (round.mode === "planner"
+                            ? JSON.stringify(round.review.assignments) ===
+                              JSON.stringify(assignments)
+                            : (round.source !== "mealplan" ||
+                                round.review.sourceEntryId ===
+                                  Number(sourceEntry)) &&
+                              round.review.targetEntryId ===
+                                (targetEntry ? Number(targetEntry) : null)) && (
+                            <div className="confirmation">
+                              <strong>Here’s what will change in Mealie</strong>
+                              <ul>
+                                {round.review.summary.map((line, i) => (
+                                  <li key={i}>{line}</li>
+                                ))}
+                              </ul>
+                              <button
+                                className="button green"
+                                disabled={busy || !online}
+                                onClick={() =>
+                                  act("/rounds/" + round.id + "/publish", {
+                                    token: round.review!.token,
+                                  })
+                                }
+                              >
+                                {busy
+                                  ? "Saving…"
+                                  : round.mode === "planner"
+                                    ? "Confirm & publish plan"
+                                    : "Confirm tonight’s dinner"}
+                                <Icon name="check" size={18} />
+                              </button>
+                            </div>
+                          )}
+                        {round.status === "exhausted" && (
+                          <button
+                            className="text-button retry"
+                            disabled={busy || !online}
+                            onClick={() =>
+                              act("/rounds/" + round.id + "/retry")
+                            }
+                          >
+                            Try unmatched recipes again
+                            <Icon name="refresh" size={15} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {saving && (
+                      <div className="review-panel">
+                        <h2>
+                          {round.status === "sync_error"
+                            ? "Your save needs another moment."
+                            : "Sending your choices to Mealie…"}
+                        </h2>
+                        <p>
+                          {round.syncError ||
+                            "If saving was interrupted, retry to check what has already been saved and finish the remaining changes."}
+                        </p>
+                        <a
+                          href={config.mealieUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Inspect the plan in Mealie ↗
+                        </a>
+                        <button
+                          className="button primary"
+                          disabled={busy || !online}
+                          onClick={() =>
+                            act("/rounds/" + round.id + "/publish", {
+                              token: round.review?.token,
+                            })
+                          }
+                        >
+                          {busy ? "Saving…" : "Retry save"}
+                        </button>
+                      </div>
+                    )}
+                    {round.status === "complete" && (
+                      <div className="review-panel complete">
+                        <span className="success-icon">
+                          <Icon name="check" size={32} />
+                        </span>
+                        <h2>
+                          {round.mode === "planner"
+                            ? "Your plan is in Mealie."
+                            : "Tonight’s dinner, sorted."}
+                        </h2>
+                        <p>Less deciding. More enjoying it together.</p>
+                        <ul>
+                          {round.result?.map((line, i) => (
+                            <li key={i}>{line}</li>
+                          ))}
+                        </ul>
+                        <a
+                          className="button green"
+                          href={config.mealieUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Mealie
+                          <Icon name="link" size={17} />
+                        </a>
+                        <button
+                          className="text-button"
+                          onClick={() => setScreen("home")}
+                        >
+                          Back to your table
+                          <Icon name="arrow" size={16} />
+                        </button>
+                      </div>
+                    )}
+                    {["cancelled", "expired"].includes(round.status) && (
+                      <div className="empty">
+                        <h2>
+                          {round.status === "expired"
+                            ? "A new day. A new dinner."
+                            : "Back to a fresh menu."}
+                        </h2>
+                        <p>
+                          {round.status === "expired"
+                            ? "Tonight’s round expired at midnight. Start a new one for today."
+                            : "This round was cancelled."}
+                        </p>
+                        <button
+                          className="button primary"
+                          onClick={() => setScreen("home")}
+                        >
+                          Choose a mode
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </section>
             )}
-          </section>
+          </>
         )}
       </main>
       <footer>
         <span className="footer-brand">dinder.</span>
-        <span>A little less deciding. A little more dinner.</span>
-        <span className="local-label">
-          <span className="status-dot" />
-          At home, together
+        <span>
+          <Icon name="heart" size={14} /> Made for your table for two.
         </span>
-      </footer>
-      <div className="match-toast-region" role="status">
-        {toast && (
-          <div className="match-toast">
-            <Icon name="heart" size={18} />
-            <span>
-              <strong>It’s a match!</strong> {toast} is on the menu.
-            </span>
-          </div>
-        )}
-      </div>
-      {modal && (
-        <div
-          className="modal-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closeModal();
-          }}
+        <a
+          href={config?.mealieUrl || "https://recipes.muthur.network"}
+          target="_blank"
+          rel="noreferrer"
         >
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="modal-title"
-            ref={modalRef}
+          Recipes by Mealie ↗
+        </a>
+      </footer>
+      <dialog
+        ref={dialog}
+        onCancel={() => setSettings(false)}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setSettings(false);
+        }}
+      >
+        <div className="settings">
+          <button
+            className="icon-button modal-close"
+            aria-label="Close profile settings"
+            onClick={() => setSettings(false)}
           >
-            <button
-              className="modal-close icon-button"
-              aria-label="Close dialog"
-              disabled={busy}
-              onClick={closeModal}
-            >
-              <Icon name="close" />
-            </button>
-            {error && (
-              <div className="error" role="alert">
-                {error}
-              </div>
-            )}
-            {draft ? (
-              <form onSubmit={saveMeal}>
-                <span className="eyebrow">ONE FOR THE COLLECTION</span>
-                <h2 id="modal-title">
-                  {draft.id ? "A little menu edit." : "What’s cooking?"}
-                </h2>
-                <p className="muted">Add something you’d love to share.</p>
-                <div className="emoji-picker" aria-label="Meal illustration">
-                  {emojis.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      aria-label={"Use " + emoji + " illustration"}
-                      aria-pressed={draft.emoji === emoji}
-                      className={draft.emoji === emoji ? "selected" : ""}
-                      onClick={() => setDraft({ ...draft, emoji })}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-                <label>
-                  Meal name <span>*</span>
-                  <input
-                    required
-                    maxLength={100}
-                    value={draft.name}
-                    onChange={(e) =>
-                      setDraft({ ...draft, name: e.target.value })
-                    }
-                    placeholder="e.g. Friday night tacos"
-                  />
-                </label>
-                <label>
-                  A little about it
-                  <textarea
-                    maxLength={2000}
-                    value={draft.notes}
-                    onChange={(e) =>
-                      setDraft({ ...draft, notes: e.target.value })
-                    }
-                    placeholder="Your favourite toppings, a little reminder…"
-                    rows={3}
-                  />
-                </label>
-                <label>
-                  Recipe link <span className="muted">(optional)</span>
-                  <input
-                    type="url"
-                    value={draft.recipe}
-                    onChange={(e) =>
-                      setDraft({ ...draft, recipe: e.target.value })
-                    }
-                    placeholder="https://…"
-                  />
-                </label>
-                <label className="upload-label">
-                  <Icon name="upload" size={20} />
-                  {draft.photo ? "Change meal photo" : "Add a meal photo"}
-                  <span className="small muted">
-                    JPG, PNG, WebP or GIF · up to 8 MB
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    disabled={busy}
-                    onChange={(e) => upload(e.target.files?.[0])}
-                  />
-                </label>
-                {draft.photo && (
-                  <div className="upload-preview">
-                    <img src={draft.photo} alt="Meal photo preview" />
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => setDraft({ ...draft, photo: "" })}
-                    >
-                      Remove photo
-                    </button>
-                  </div>
-                )}
-                <button className="button primary full" disabled={busy}>
-                  {busy
-                    ? "Saving…"
-                    : draft.id
-                      ? "Save changes"
-                      : "Add to our meals"}
-                  <Icon name="check" size={18} />
-                </button>
-              </form>
-            ) : settings ? (
-              <>
-                <span className="eyebrow">YOUR TABLE FOR TWO</span>
-                <h2 id="modal-title">Who’s hungry?</h2>
-                <p className="muted">
-                  Choose your profile or make these names your own.
-                </p>
-                <div className="settings-profiles">
-                  {profiles.map((p, i) => (
-                    <div className="settings-person" key={p.id}>
-                      <label htmlFor={"name-" + p.id}>
-                        Person {i + 1}
-                        <input
-                          id={"name-" + p.id}
-                          maxLength={40}
-                          value={names[i] || ""}
-                          onChange={(e) =>
-                            setNames(
-                              names.map((n, j) =>
-                                i === j ? e.target.value : n,
-                              ),
-                            )
-                          }
-                        />
-                      </label>
-                      <button
-                        className={
-                          "button " +
-                          (profile === p.id ? "secondary" : "neutral")
-                        }
-                        disabled={busy || !names.every((n) => n.trim())}
-                        onClick={() =>
-                          void perform(async () => {
-                            for (const [j, person] of profiles.entries())
-                              await api("/profiles/" + person.id, {
-                                method: "PATCH",
-                                body: JSON.stringify({ name: names[j] }),
-                              });
-                            setProfiles(await api<Profile[]>("/profiles"));
-                            choose(p.id);
-                            setSettings(false);
-                          })
-                        }
-                      >
-                        {profile === p.id ? "That’s me" : "Switch"}
-                        {profile === p.id && <Icon name="check" size={16} />}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  className="button primary full"
-                  disabled={busy || !names.every((n) => n.trim())}
-                  onClick={() =>
-                    void perform(async () => {
-                      for (const [i, p] of profiles.entries())
-                        await api("/profiles/" + p.id, {
-                          method: "PATCH",
-                          body: JSON.stringify({ name: names[i] }),
-                        });
-                      setProfiles(await api<Profile[]>("/profiles"));
-                      setSettings(false);
-                    })
+            <Icon name="close" />
+          </button>
+          <span className="eyebrow">YOUR TABLE FOR TWO</span>
+          <h2>Who’s hungry?</h2>
+          <p>Make these names your own, or switch profile.</p>
+          {config?.profiles.map((p, i) => (
+            <div className="settings-person" key={p.id}>
+              <label>
+                Person {p.id}
+                <input
+                  maxLength={40}
+                  value={names[i] || ""}
+                  onChange={(e) =>
+                    setNames((n) =>
+                      n.map((v, j) => (i === j ? e.target.value : v)),
+                    )
                   }
-                >
-                  {busy ? "Saving…" : "Save names"}
-                </button>
-              </>
-            ) : selection !== null ? (
-              <>
-                <span className="eyebrow">SET THE MENU</span>
-                <h2 id="modal-title">What’s in the running?</h2>
-                <p className="muted">
-                  Choose the meals you’d like to swipe on.
-                </p>
-                <div className="selection-list">
-                  {meals.map((m) => (
-                    <label key={m.id}>
-                      <input
-                        type="checkbox"
-                        checked={selection.includes(m.id)}
-                        onChange={(e) =>
-                          setSelection(
-                            e.target.checked
-                              ? [...selection, m.id]
-                              : selection.filter((id) => id !== m.id),
-                          )
-                        }
-                      />
-                      <span>{m.emoji}</span>
-                      {m.name}
-                    </label>
-                  ))}
-                </div>
-                <button
-                  className="button primary full"
-                  disabled={busy || !selection.length}
-                  onClick={() => start(selection)}
-                >
-                  Start with {selection.length}{" "}
-                  {selection.length === 1 ? "meal" : "meals"}{" "}
-                  <Icon name="arrow" size={18} />
-                </button>
-              </>
-            ) : confirmDelete ? (
-              <>
-                <span className="eyebrow">A LITTLE MENU CLEAN-UP</span>
-                <h2 id="modal-title">Remove this meal?</h2>
-                <p className="muted">
-                  {confirmDelete.name} will leave your collection. An ongoing
-                  round will keep its copy.
-                </p>
-                <div className="dialog-actions">
-                  <button
-                    className="button neutral"
-                    disabled={busy}
-                    onClick={closeModal}
-                  >
-                    Keep it
-                  </button>
-                  <button
-                    className="button primary"
-                    disabled={busy}
-                    onClick={() =>
-                      void perform(async () => {
-                        await api("/meals/" + confirmDelete.id, {
-                          method: "DELETE",
-                        });
-                        await refreshMeals();
-                        setConfirmDelete(null);
-                      })
-                    }
-                  >
-                    {busy ? "Removing…" : "Remove meal"}
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
+                />
+              </label>
+              <button
+                className="button secondary"
+                disabled={busy}
+                onClick={() => choose(p.id)}
+              >
+                {profile === p.id ? "That’s me" : "Switch"}
+              </button>
+            </div>
+          ))}
+          <button
+            className="button primary"
+            disabled={busy || !names.every((n) => n.trim())}
+            onClick={() =>
+              void perform(async () => {
+                for (let i = 0; i < config!.profiles.length; i++)
+                  await api(
+                    "/profiles/" + config!.profiles[i].id,
+                    profile,
+                    { name: names[i] },
+                    "PATCH",
+                  );
+                setConfig((c) =>
+                  c
+                    ? {
+                        ...c,
+                        profiles: c.profiles.map((p, i) => ({
+                          ...p,
+                          name: names[i],
+                        })),
+                      }
+                    : c,
+                );
+                setSettings(false);
+              })
+            }
+          >
+            Save names
+          </button>
         </div>
-      )}
+      </dialog>
     </>
   );
 }

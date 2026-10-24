@@ -1,24 +1,22 @@
 {
   "name": "dinder",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "server": "node server/index.js",
+    "server": "node --env-file-if-exists=.env server/index.js",
     "build": "tsc --noEmit && vite build",
-    "start": "node server/index.js",
-    "test": "node tests/store.test.js"
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "test": "node --test --test-isolation=none tests/*.test.js"
   },
   "dependencies": {
     "express": "^5.1.0",
-    "multer": "^2.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
-    "@types/multer": "^2.0.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

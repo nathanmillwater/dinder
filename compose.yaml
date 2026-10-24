@@ -1,8 +1,14 @@
 services:
   dinder:
+    image: dinder:2.0.0
     build: .
     ports:
       - "${DINDER_PORT:-3000}:3000"
+    environment:
+      MEALIE_URL: ${MEALIE_URL:-https://recipes.muthur.network}
+      MEALIE_PUBLIC_URL: ${MEALIE_PUBLIC_URL:-https://recipes.muthur.network}
+      TZ: ${TZ:-Europe/London}
+      MEALIE_API_TOKEN: ${MEALIE_API_TOKEN:-}
     volumes:
       - dinder-data:/data
     init: true

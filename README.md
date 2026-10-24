@@ -1,50 +1,67 @@
-# Dinder
+# Dinder v2
 
-Dinner, together. A shared meal collection and a swipe-to-match dinner picker for two people on your LAN.
+Dinner, together. Two people swipe through a live Mealie collection to plan the week or choose tonight’s dinner. Mealie owns the recipes and meal plan; Dinder keeps only profiles, round progress, and reliable-save journals.
 
-## Run with Docker
+## Two modes
+
+**Meal Planner** defaults to next Monday–Sunday, with an editable start date. Every shared yes adds a distinct dinner; seven shared yeses complete the draft. Review and reorder the meals before publishing. Publishing replaces all dinner entries on the selected dates, preserving other meal types. If you run out of shared likes, publish a partial plan on selected nights or retry unmatched recipes while keeping your matches.
+
+**Meal Picker** uses either all Mealie recipes or dinner recipes in the upcoming seven days, including today. The first shared yes wins. From the recipe pool, review and confirm setting tonight’s dinner. From the meal plan, review a swap between the selected planned dinner and tonight’s dinner; if tonight is empty, the winning dinner moves to tonight. Multiple planned entries require selecting the exact entries. A winner already scheduled tonight needs no change.
+
+There are exactly two named profiles and one shared round at a time. Votes are private, partner progress is shared, and refreshing or restarting preserves the round. Swipe, tap heart/cross, or use keyboard arrows. Either player can cancel before saving begins. Picker rounds expire at local midnight; an already-started save continues reconciling its original reviewed dates.
+
+## Live Mealie data
+
+Recipes are loaded from Mealie with at most 15 seconds of in-memory caching. Active rounds incorporate additions, edits, and deletions while retaining surviving votes. Deleted shared matches reopen planner slots. Refresh fetches immediately, and new rounds and confirmation checks fetch fresh data. Planned pools exclude notes without recipes and deduplicate recipes while retaining their entry dates.
+
+Mealie outages pause swiping and saving without losing progress. Recipe photos and links use the public Mealie address and may require a Mealie browser login. No local recipe management or match-history screen remains.
+
+## Run with Docker Compose
+
+Create a long-lived Mealie API token in **User profile → API Tokens**, with permission to read recipes and edit the household’s meal plan. Copy `.env.example` to `.env`:
+
+```dotenv
+MEALIE_URL=https://recipes.muthur.network
+MEALIE_PUBLIC_URL=https://recipes.muthur.network
+MEALIE_API_TOKEN=your-token-here
+TZ=Europe/London
+```
 
 ```sh
 docker compose up -d --build
 ```
 
-Open **http://SERVER_LAN_IP:3000** on both phones connected to the same network. To find the server address, run `hostname -I` on the server. Each person chooses a different profile; names can be changed using the profile button. No login or external service is needed.
+Open `http://SERVER_LAN_IP:3000` on both phones and choose different profiles. `DINDER_PORT=3080` changes the standalone host port. The local image is tagged `dinder:2.0.0`; no registry is required.
 
-To use another port: `DINDER_PORT=3080 docker compose up -d --build`.
+`MEALIE_URL` is the backend API base. `MEALIE_PUBLIC_URL` supplies browser recipe/photo links; use different values when reaching Mealie internally over Docker. The token stays on the server, and `.env` is ignored by Git and excluded from build contexts. This is a trusted-LAN application without Dinder authentication; everyone who can reach it can act on the configured household’s meal plan.
 
-Use “Add starter meals” for 12 editable dinner ideas, or build your own collection. Photos are uploaded to this server (8 MB maximum). Recipe links open in a new tab.
+## Homelab deployment
 
-## Match Mode
+The sibling `../homelab` repository includes Dinder in its apps stack, built from this checkout. It uses `http://mealie:9000` internally, routes HTTPS through Traefik at `https://dinder.${DOMAIN}`, and appears in Homepage. Copy homelab’s `apps/dinder.env.example` to its ignored `apps/dinder.env` and set `MEALIE_API_TOKEN` there. See `../homelab/docs/dinder.md` for operations and rollback.
 
-Either person starts a round with up to ten randomly selected meals. The other opens Dinder and selects “Join Match Mode”. Each profile sees the same meals in a different order. Swipe right/left, tap the heart/cross, or use keyboard arrow keys. The first shared yes wins. Choices and progress survive refreshing and restarting the app. If one person finishes first, they wait for the other. After no match, retry with a random shortlist or choose meals yourselves. Meal edits never alter an ongoing round.
-
-Only one round can be active. Both people must finish it or match before starting another. Private votes stay hidden; each partner can see the other's progress count. This is designed for a trusted LAN, without authentication.
-
-## Meal planner
-
-“Plan our week” starts a round that keeps going until you have seven shared yeses — a dinner for each night. It swipes through your whole collection (at least seven meals), each match pops up as it happens, and the finished plan lists the nights from the day you started. It shares the one-active-round rule with Match Mode. If you both run out of meals first, the nights you did match are kept in History.
-
-## Match history
-
-The History tab saves every successful match and week plan (including partly filled ones), newest first, with its meal details and recipe link. It is shared between both profiles and survives meal edits, deletion, and restarts. Existing matches are included automatically; older matches show their round start time because an exact match timestamp was not recorded before this feature.
-
-## Data and backup
-
-SQLite, its journal files, and uploaded photos live in the Docker volume `dinder-data` (usually named `dinder_dinder-data`). `docker compose down` preserves them. **`docker compose down -v` deletes them.**
-
-For a consistent backup, stop the service and archive the whole volume:
+From the homelab root:
 
 ```sh
-docker compose stop
-docker run --rm -v dinder_dinder-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/dinder-backup.tar.gz -C /data .
-docker compose start
+./scripts/compose-validate.sh
+docker compose --env-file .env -f apps/docker-compose.yml build dinder
+docker compose --env-file .env -f apps/docker-compose.yml up -d --no-deps dinder
 ```
 
-If you changed the Compose project name, find the volume using `docker volume ls` and replace `dinder_dinder-data`. To restore, stop the service, extract that archive into the same volume as root, ensure `/data` is owned by UID 1000, then start the service again. Backups contain your photos and meal data; keep them outside the source repository.
+The existing proxy network and Mealie service must be running. Prepare `${SERVICES_PATH}/dinder/data` owned by UID/GID 1000. There is no host port in homelab mode.
 
-## Local development
+## Reliable writes and storage
 
-Requires Node.js 24 or newer and npm.
+Every change requires reviewing its effect and then confirming. Dinder checks for concurrent Mealie edits, journals each write before sending it, and verifies the result before continuing. Weekly replacement stages new dinners before removing old ones. Save retries reconcile existing entries using stable operation markers instead of creating duplicates; these markers appear in the created Mealie dinner’s notes.
+
+Mealie does not offer an atomic multi-entry write, so an interruption can leave a partially updated plan. Dinder shows a save error and retains its journal. Retry to finish. If another client has edited an affected entry, Dinder stops rather than overwriting it; inspect Mealie and restore the reviewed entry before retrying. Do not delete the state directory while saving is incomplete. No automatic rollback overwrites external edits.
+
+SQLite lives at `/data/dinder-v2.sqlite` in Docker, or `$DATA_DIR/dinder-v2.sqlite` locally (default `./data`). The standalone volume remains `dinder-data`; homelab uses its separate bind mount. Old v1 files are not migrated or used. Keep the old standalone container/image/volume for rollback during cutover. A Dinder rollback does not undo changes already confirmed in Mealie.
+
+Back up Dinder’s entire data directory while stopped, and back up Mealie separately for recipes and plans. `docker compose down` preserves named volumes; **`docker compose down -v` deletes them**.
+
+## Development and checks
+
+Requires Node.js 24 or newer. `npm start` loads the ignored `.env` file; shell environment variables take precedence.
 
 ```sh
 npm ci
@@ -52,16 +69,13 @@ npm run build
 npm start
 ```
 
-For live frontend editing run `npm run dev` in a second terminal while the backend is running on port 3000; open port 5173. `PORT` changes the backend port; `DATA_DIR` changes the data directory (defaults to `./data`). The development proxy expects backend port 3000.
+For frontend development, run `npm run dev` alongside the backend on port 3000 and open port 5173. `PORT` and `DATA_DIR` configure the backend. The development proxy expects port 3000.
 
 ```sh
 npm test
 npm run build
-docker compose logs -f
 ```
 
-Health endpoint: `/api/health`. Docker checks it every 30 seconds and restarts the service if its process exits. SQLite and image storage require local disk; do not put the database on a network share. Google Fonts improve typography when available; system font fallbacks keep the app usable offline. No external image or recipe services are needed.
+Tests use disposable data and a mock Mealie service. They cover live pool updates, private voting, complete and partial planning, swaps, date boundaries, concurrent submissions, failures after writes, conflict detection, and restart recovery. They require permission to listen on localhost. Optional browser tests require `playwright-core` and Chromium (`CHROMIUM_PATH`, default `/usr/bin/chromium`): run `node tests/browser.cjs` after building. Screenshots go to `DINDER_TEST_ARTIFACTS` (default `/tmp/dinder-v2-artifacts`). No tests change the real Mealie service.
 
-## Optional browser tests
-
-`tests/browser.cjs` exercises two isolated phone sessions, meal uploads and edits, matching, reconnection, refresh, and desktop layout. Run it only against a disposable instance: it replaces the test instance’s meal collection. Install `playwright-core` separately, provide Chromium through `CHROMIUM_PATH`, set `DINDER_TEST_URL` (default `http://127.0.0.1:3099`), then run `node tests/browser.cjs`. Screenshots are written to `DINDER_TEST_ARTIFACTS` (default `/tmp/dinder-artifacts`).
+`/api/health` checks Dinder independently of Mealie. Docker checks it every 30 seconds. Optional Google Fonts fall back to system fonts offline.
